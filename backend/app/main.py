@@ -99,9 +99,10 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         }
 
     @app.post("/api/dev/login")
-    def dev_login(payload: DevLoginRequest, request: Request, db: Session = Depends(db_session)):
+    async def dev_login(request: Request, db: Session = Depends(db_session)):
         if not settings.dev_auth_enabled:
             raise HTTPException(status_code=404, detail="Not found")
+        payload = DevLoginRequest.model_validate(await request.json())
         user = upsert_user_from_claims(db, payload.model_dump(exclude_none=True))
         db.commit()
         request.session["user_id"] = user.id
@@ -323,9 +324,10 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         return {"ok": True}
 
     @app.post("/api/dev/feishu/reply")
-    async def dev_feishu_reply(payload: FeishuReplyEvent, db: Session = Depends(db_session)):
+    async def dev_feishu_reply(request: Request, db: Session = Depends(db_session)):
         if not settings.dev_auth_enabled:
             raise HTTPException(status_code=404, detail="Not found")
+        payload = FeishuReplyEvent.model_validate(await request.json())
         message = handle_feishu_reply(
             db,
             payload.reply_to_message_id,
