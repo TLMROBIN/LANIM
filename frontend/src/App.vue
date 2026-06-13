@@ -23,7 +23,8 @@ const routeClass = ref('高一1班')
 const routeSubject = ref('物理')
 const routeTeacherId = ref<number | ''>('')
 
-const loginUrl = '/api/auth/oidc/login'
+const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+const loginUrl = `${basePath}/api/auth/oidc/login`
 const isStudent = computed(() => me.value?.role === 'student')
 const isTeacher = computed(() => me.value?.role === 'teacher')
 const isAdmin = computed(() => me.value?.role === 'admin')
@@ -94,7 +95,7 @@ async function createRoute() {
 
 function connectSocket() {
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-  const socket = new WebSocket(`${protocol}://${location.host}/ws`)
+  const socket = new WebSocket(`${protocol}://${location.host}${basePath}/ws`)
   socket.onmessage = async (event) => {
     const data = JSON.parse(event.data)
     if (data.event === 'conversation.updated' && isTeacher.value) conversations.value = await api.inbox()
