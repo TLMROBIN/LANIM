@@ -1,0 +1,66 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: im
+      POSTGRES_USER: im
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-im-dev-password}
+    volumes:
+      - im-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U im -d im"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      IM_DATABASE_URL: postgresql+psycopg://im:${POSTGRES_PASSWORD:-im-dev-password}@db:5432/im
+      IM_MEDIA_DIR: /data/media
+      IM_SESSION_SECRET: ${IM_SESSION_SECRET:-change-me}
+      IM_OIDC_ISSUER: ${IM_OIDC_ISSUER:-http://10.50.159.62/auth/realms/school-platform}
+      IM_OIDC_CLIENT_ID: ${IM_OIDC_CLIENT_ID:-im}
+      IM_OIDC_CLIENT_SECRET: ${IM_OIDC_CLIENT_SECRET:-replace-with-keycloak-client-secret}
+      IM_OIDC_REDIRECT_URI: ${IM_OIDC_REDIRECT_URI:-http://10.50.159.62/im/api/auth/oidc/callback}
+      IM_FEISHU_APP_ID: ${IM_FEISHU_APP_ID:-}
+      IM_FEISHU_APP_SECRET: ${IM_FEISHU_APP_SECRET:-}
+    volumes:
+      - im-media:/data/media
+
+  feishu-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "app.feishu_worker"]
+    environment:
+      IM_DATABASE_URL: postgresql+psycopg://im:${POSTGRES_PASSWORD:-im-dev-password}@db:5432/im
+      IM_FEISHU_APP_ID: ${IM_FEISHU_APP_ID:-}
+      IM_FEISHU_APP_SECRET: ${IM_FEISHU_APP_SECRET:-}
+    volumes:
+      - im-media:/data/media
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${IM_HTTP_PORT:-8090}:80"
+
+volumes:
+  im-db-data:
+  im-media:

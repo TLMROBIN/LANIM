@@ -1,0 +1,15 @@
+{
+  "clientId": "im",
+  "name": "School IM",
+  "enabled": true,
+  "protocol": "openid-connect",
+  "publicClient": false,
+  "redirectUris": [
+    "http://10.50.159.62/im/api/auth/oidc/callback"
+  ],
+  "webOrigins": [
+    "http://10.50.159.62"
+  ],
+  "standardFlowEnabled": true,
+  "directAccessGrantsEnabled": false
+}
