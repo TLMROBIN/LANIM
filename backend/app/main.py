@@ -39,12 +39,14 @@ from .services import (
 )
 
 
-def create_app(database_url: str | None = None, media_dir: Path | None = None) -> FastAPI:
+def create_app(database_url: str | None = None, media_dir: Path | None = None, dev_auth_enabled: bool | None = None) -> FastAPI:
     settings = Settings()
     if database_url:
         settings.database_url = database_url
     if media_dir:
         settings.media_dir = media_dir
+    if dev_auth_enabled is not None:
+        settings.dev_auth_enabled = dev_auth_enabled
 
     session_factory = build_sessionmaker(settings.database_url)
     engine = session_factory.kw["bind"]
@@ -98,6 +100,8 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None) -
 
     @app.post("/api/dev/login")
     def dev_login(payload: DevLoginRequest, request: Request, db: Session = Depends(db_session)):
+        if not settings.dev_auth_enabled:
+            raise HTTPException(status_code=404, detail="Not found")
         user = upsert_user_from_claims(db, payload.model_dump(exclude_none=True))
         db.commit()
         request.session["user_id"] = user.id
@@ -320,6 +324,8 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None) -
 
     @app.post("/api/dev/feishu/reply")
     async def dev_feishu_reply(payload: FeishuReplyEvent, db: Session = Depends(db_session)):
+        if not settings.dev_auth_enabled:
+            raise HTTPException(status_code=404, detail="Not found")
         message = handle_feishu_reply(
             db,
             payload.reply_to_message_id,

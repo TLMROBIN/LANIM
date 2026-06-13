@@ -19,5 +19,6 @@ class Settings(BaseSettings):
     feishu_app_secret: Optional[str] = None
     feishu_encrypt_key: Optional[str] = None
     feishu_verification_token: Optional[str] = None
+    dev_auth_enabled: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="IM_")

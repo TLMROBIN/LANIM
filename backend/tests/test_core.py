@@ -9,7 +9,7 @@ from app.main import create_app
 
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
-    app = create_app(database_url="sqlite:///:memory:", media_dir=tmp_path / "media")
+    app = create_app(database_url="sqlite:///:memory:", media_dir=tmp_path / "media", dev_auth_enabled=True)
     return TestClient(app)
 
 
