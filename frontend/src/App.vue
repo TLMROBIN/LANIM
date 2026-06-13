@@ -103,6 +103,10 @@ function connectSocket() {
   }
 }
 
+function assetUrl(url: string) {
+  return url.startsWith('/api/') ? `${basePath}${url}` : url
+}
+
 onMounted(async () => {
   await loadMe()
   await loadReferenceData()
@@ -155,7 +159,7 @@ onMounted(async () => {
         <div v-for="message in messages" :key="message.id" class="message" :class="message.sender_role">
           <strong>{{ message.sender_name }}</strong>
           <p>{{ message.content }}</p>
-          <img v-for="image in message.images" :key="image.id" :src="image.url" :alt="image.original_name" />
+          <img v-for="image in message.images" :key="image.id" :src="assetUrl(image.url)" :alt="image.original_name" />
         </div>
       </div>
     </section>
@@ -176,7 +180,7 @@ onMounted(async () => {
         <div v-for="message in messages" :key="message.id" class="message" :class="message.sender_role">
           <strong>{{ message.sender_name }} <small>{{ message.source }}</small></strong>
           <p>{{ message.content }}</p>
-          <img v-for="image in message.images" :key="image.id" :src="image.url" :alt="image.original_name" />
+          <img v-for="image in message.images" :key="image.id" :src="assetUrl(image.url)" :alt="image.original_name" />
         </div>
         <textarea v-model="content" rows="4" placeholder="输入回复"></textarea>
         <input type="file" accept="image/*" @change="selectedImage = ($event.target as HTMLInputElement).files?.[0] || null" />
