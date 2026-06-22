@@ -22,7 +22,7 @@ def first_attr(attributes: dict[str, Any], key: str) -> str | None:
 
 def role_from_claims(claims: dict[str, Any]) -> str:
     attributes = claims.get("attributes") or {}
-    role = first_attr(attributes, "role") or claims.get("role")
+    role = (first_attr(attributes, "role") or claims.get("role") or "").lower()
     if role not in {item.value for item in Role}:
         raise HTTPException(status_code=400, detail="OIDC claims missing valid role")
     return str(role)

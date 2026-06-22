@@ -23,7 +23,7 @@ def first_attr(attributes: dict[str, Any], key: str) -> str | None:
 
 def keycloak_user_to_admin_user(user: dict[str, Any]) -> AdminUserCreate | None:
     attributes = user.get("attributes") or {}
-    role = first_attr(attributes, "role") or user.get("role")
+    role = (first_attr(attributes, "role") or user.get("role") or "").lower()
     if role not in {"student", "teacher", "admin"}:
         return None
     username = user.get("username")

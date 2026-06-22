@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.sync_keycloak_users import keycloak_user_to_admin_user
 from app.main import create_app
 
 
@@ -47,6 +48,42 @@ def test_oidc_claims_create_profile_and_missing_role_is_rejected(client: TestCli
     )
     assert bad.status_code == 400
     assert "role" in bad.json()["detail"]
+
+
+def test_oidc_claims_accept_uppercase_keycloak_role(client: TestClient):
+    login(
+        client,
+        "STUDENT",
+        "stu-uppercase",
+        "大写角色学生",
+        grade=["高一"],
+    )
+
+    me = client.get("/api/me")
+    assert me.status_code == 200
+    assert me.json()["role"] == "student"
+
+
+def test_keycloak_sync_accepts_uppercase_role_attributes():
+    payload = keycloak_user_to_admin_user(
+        {
+            "id": "keycloak-student-uppercase",
+            "username": "20260002",
+            "firstName": "李四",
+            "enabled": True,
+            "attributes": {
+                "student_no": ["20260002"],
+                "role": ["STUDENT"],
+                "grade": ["2"],
+            },
+        }
+    )
+
+    assert payload is not None
+    assert payload.role == "student"
+    assert payload.username == "20260002"
+    assert payload.display_name == "李四"
+    assert payload.grade == "2"
 
 
 def test_student_cannot_access_teacher_or_admin_apis(client: TestClient):
