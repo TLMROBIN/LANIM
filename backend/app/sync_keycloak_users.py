@@ -60,7 +60,7 @@ async def fetch_keycloak_users(base_url: str, realm: str, admin_user: str, admin
         while True:
             response = await client.get(
                 f"{root}/admin/realms/{realm}/users",
-                params={"first": first, "max": 100},
+                params={"first": first, "max": 100, "briefRepresentation": "false"},
                 headers={"Authorization": f"Bearer {token}"},
             )
             response.raise_for_status()
