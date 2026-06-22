@@ -81,7 +81,7 @@ python -m app.sync_keycloak_users \
 同步规则：
 
 - 使用 Keycloak 用户 `id` 作为 IM `oidc_sub`，保证 OIDC 登录后能命中同一用户。
-- 读取 `attributes.role`，只同步 `student`、`teacher`、`admin`。
+- 读取 `attributes.role`，大小写归一化后只同步 `student`、`teacher`、`admin`。
 - 学生班级优先读取 `attributes.class_id` 或 `attributes.class`，否则回退到 `attributes.grade`。
 - 重复同步会 upsert，不会重复创建同一 SSO 用户。
 
