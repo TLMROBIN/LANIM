@@ -7,6 +7,17 @@ export interface User {
   grade?: string | null
 }
 
+export interface TeacherProfile {
+  enabled: boolean
+  feishu_open_id?: string | null
+  feishu_user_id?: string | null
+}
+
+export interface AdminUser extends User {
+  oidc_sub: string
+  teacher_profile?: TeacherProfile | null
+}
+
 export interface ImageAsset {
   id: number
   url: string

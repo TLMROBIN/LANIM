@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { api } from './api'
-import type { Conversation, Message, User } from './types'
+import type { AdminUser, Conversation, Message, User } from './types'
 
 const me = ref<User | null>(null)
 const teachers = ref<User[]>([])
@@ -10,6 +10,7 @@ const messages = ref<Message[]>([])
 const selectedConversation = ref<Conversation | null>(null)
 const routes = ref<{ id: number; class_id: string; subject: string; teacher_id: number }[]>([])
 const feishuStatus = ref<{ worker: string; deliveries: unknown[] } | null>(null)
+const adminUsers = ref<AdminUser[]>([])
 const error = ref('')
 const sending = ref(false)
 
@@ -22,6 +23,18 @@ const selectedImage = ref<File | null>(null)
 const routeClass = ref('高一1班')
 const routeSubject = ref('物理')
 const routeTeacherId = ref<number | ''>('')
+const userForm = ref({
+  id: 0,
+  oidc_sub: '',
+  username: '',
+  display_name: '',
+  role: 'student',
+  class_id: '',
+  grade: '',
+  enabled: true,
+  feishu_open_id: '',
+  feishu_user_id: ''
+})
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
 const loginUrl = `${basePath}/api/auth/oidc/login`
@@ -42,6 +55,7 @@ async function loadReferenceData() {
   teachers.value = await api.teachers().catch(() => [])
   if (isTeacher.value) conversations.value = await api.inbox()
   if (isAdmin.value) {
+    adminUsers.value = await api.adminUsers()
     routes.value = await api.routes()
     feishuStatus.value = await api.feishuStatus()
   }
@@ -92,6 +106,74 @@ async function createRoute() {
   await api.createRoute({ class_id: routeClass.value, subject: routeSubject.value, teacher_id: routeTeacherId.value })
   routes.value = await api.routes()
 }
+
+function resetUserForm() {
+  userForm.value = {
+    id: 0,
+    oidc_sub: '',
+    username: '',
+    display_name: '',
+    role: 'student',
+    class_id: '',
+    grade: '',
+    enabled: true,
+    feishu_open_id: '',
+    feishu_user_id: ''
+  }
+}
+
+function editUser(user: AdminUser) {
+  userForm.value = {
+    id: user.id,
+    oidc_sub: user.oidc_sub,
+    username: user.username,
+    display_name: user.display_name,
+    role: user.role,
+    class_id: user.class_id || '',
+    grade: user.grade || '',
+    enabled: user.teacher_profile?.enabled ?? true,
+    feishu_open_id: user.teacher_profile?.feishu_open_id || '',
+    feishu_user_id: user.teacher_profile?.feishu_user_id || ''
+  }
+}
+
+async function saveUser() {
+  error.value = ''
+  const payload = {
+    oidc_sub: userForm.value.oidc_sub || undefined,
+    username: userForm.value.username,
+    display_name: userForm.value.display_name,
+    role: userForm.value.role,
+    class_id: userForm.value.class_id || undefined,
+    grade: userForm.value.grade || undefined,
+    enabled: userForm.value.enabled,
+    feishu_open_id: userForm.value.feishu_open_id || undefined,
+    feishu_user_id: userForm.value.feishu_user_id || undefined
+  }
+  try {
+    if (userForm.value.id) {
+      await api.updateAdminUser(userForm.value.id, payload)
+    } else {
+      await api.createAdminUser(payload)
+    }
+    resetUserForm()
+    await loadReferenceData()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function deleteUser(user: AdminUser) {
+  error.value = ''
+  try {
+    await api.deleteAdminUser(user.id)
+    await loadReferenceData()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+const adminTeachers = computed(() => adminUsers.value.filter((user) => user.role === 'teacher'))
 
 function connectSocket() {
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -190,23 +272,77 @@ onMounted(async () => {
 
     <section v-if="isAdmin" class="grid">
       <div class="card">
+        <h2>{{ userForm.id ? '编辑用户' : '添加用户' }}</h2>
+        <label>角色</label>
+        <select v-model="userForm.role" :disabled="Boolean(userForm.id)">
+          <option value="student">学生</option>
+          <option value="teacher">教师</option>
+          <option value="admin">管理员</option>
+        </select>
+        <label>SSO/OIDC Sub（可留空，系统会按用户名生成手工账号标识）</label>
+        <input v-model="userForm.oidc_sub" :disabled="Boolean(userForm.id)" placeholder="Keycloak 用户 ID 或 manual:xxx" />
+        <label>用户名</label>
+        <input v-model="userForm.username" placeholder="例如 stu1001 或 teacher-physics" />
+        <label>姓名</label>
+        <input v-model="userForm.display_name" placeholder="真实姓名" />
+        <label>班级（学生必填；教师班级通过右侧任课路由指定）</label>
+        <input v-model="userForm.class_id" placeholder="例如 高一1班" />
+        <label>年级</label>
+        <input v-model="userForm.grade" placeholder="例如 高一" />
+        <template v-if="userForm.role === 'teacher'">
+          <label>教师启用</label>
+          <select v-model="userForm.enabled">
+            <option :value="true">启用</option>
+            <option :value="false">停用</option>
+          </select>
+          <label>飞书 open_id</label>
+          <input v-model="userForm.feishu_open_id" placeholder="ou_xxx" />
+          <label>飞书 user_id</label>
+          <input v-model="userForm.feishu_user_id" placeholder="可选" />
+        </template>
+        <button class="button primary" @click="saveUser">保存用户</button>
+        <button v-if="userForm.id" class="button" @click="resetUserForm">取消编辑</button>
+      </div>
+
+      <div class="card">
         <h2>任课路由</h2>
         <input v-model="routeClass" placeholder="班级，如 高一1班" />
         <input v-model="routeSubject" placeholder="科目，如 物理" />
         <select v-model="routeTeacherId">
           <option disabled value="">选择教师</option>
-          <option v-for="teacher in teachers" :key="teacher.id" :value="teacher.id">{{ teacher.display_name }}</option>
+          <option v-for="teacher in adminTeachers" :key="teacher.id" :value="teacher.id">{{ teacher.display_name }}</option>
         </select>
         <button class="button primary" @click="createRoute">保存路由</button>
         <ul>
           <li v-for="route in routes" :key="route.id">{{ route.class_id }} / {{ route.subject }} → #{{ route.teacher_id }}</li>
         </ul>
       </div>
+
+      <div class="card wide">
+        <h2>用户列表</h2>
+        <button class="button" @click="loadReferenceData">刷新用户与路由</button>
+        <div class="user-table">
+          <div v-for="user in adminUsers" :key="user.id" class="user-row">
+            <div>
+              <strong>{{ user.display_name }}</strong>
+              <span>{{ user.role }} · {{ user.username }} · {{ user.class_id || '无班级' }}</span>
+              <small v-if="user.teacher_profile">
+                飞书：{{ user.teacher_profile.feishu_open_id || '未绑定' }} · {{ user.teacher_profile.enabled ? '启用' : '停用' }}
+              </small>
+            </div>
+            <div class="row-actions">
+              <button class="button" @click="editUser(user)">编辑</button>
+              <button class="button danger" @click="deleteUser(user)">删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="card">
         <h2>飞书状态</h2>
         <p>Worker：{{ feishuStatus?.worker || 'unknown' }}</p>
         <p>投递记录：{{ feishuStatus?.deliveries.length || 0 }}</p>
-        <p class="muted">教师飞书 open_id/user_id 通过 Admin API 维护；后续可扩展成表单。</p>
+        <p class="muted">教师飞书 open_id/user_id 可在左侧“添加/编辑用户”中维护。配置 APP ID/Secret 后，worker 会启用长连接。</p>
       </div>
     </section>
   </main>

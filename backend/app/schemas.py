@@ -20,6 +20,38 @@ class TeacherUpdate(BaseModel):
     feishu_user_id: Optional[str] = None
 
 
+class TeacherProfileOut(BaseModel):
+    enabled: bool
+    feishu_open_id: Optional[str] = None
+    feishu_user_id: Optional[str] = None
+
+
+class AdminUserCreate(BaseModel):
+    oidc_sub: Optional[str] = None
+    username: str
+    display_name: str
+    role: Literal["student", "teacher", "admin"]
+    class_id: Optional[str] = None
+    grade: Optional[str] = None
+    enabled: bool = True
+    feishu_open_id: Optional[str] = None
+    feishu_user_id: Optional[str] = None
+
+
+class AdminUserUpdate(BaseModel):
+    username: Optional[str] = None
+    display_name: Optional[str] = None
+    class_id: Optional[str] = None
+    grade: Optional[str] = None
+    enabled: Optional[bool] = None
+    feishu_open_id: Optional[str] = None
+    feishu_user_id: Optional[str] = None
+
+
+class AdminUserSyncRequest(BaseModel):
+    users: List[AdminUserCreate] = Field(default_factory=list)
+
+
 class RouteCreate(BaseModel):
     class_id: str
     subject: str
@@ -53,6 +85,11 @@ class UserOut(BaseModel):
     role: str
     class_id: Optional[str] = None
     grade: Optional[str] = None
+
+
+class AdminUserOut(UserOut):
+    oidc_sub: str
+    teacher_profile: Optional[TeacherProfileOut] = None
 
 
 class ImageOut(BaseModel):

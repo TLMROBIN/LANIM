@@ -1,4 +1,4 @@
-import type { Conversation, Message, User } from './types'
+import type { AdminUser, Conversation, Message, User } from './types'
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
 const apiPath = `${basePath}/api`
@@ -31,5 +31,10 @@ export const api = {
   },
   routes: () => request<{ id: number; class_id: string; subject: string; teacher_id: number }[]>(`${apiPath}/admin/routes`),
   createRoute: (payload: unknown) => request(`${apiPath}/admin/routes`, { method: 'POST', body: JSON.stringify(payload) }),
+  adminUsers: (role = '') => request<AdminUser[]>(`${apiPath}/admin/users${role ? `?role=${encodeURIComponent(role)}` : ''}`),
+  createAdminUser: (payload: unknown) => request<AdminUser>(`${apiPath}/admin/users`, { method: 'POST', body: JSON.stringify(payload) }),
+  updateAdminUser: (id: number, payload: unknown) => request<AdminUser>(`${apiPath}/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteAdminUser: (id: number) => request<{ ok: boolean }>(`${apiPath}/admin/users/${id}`, { method: 'DELETE' }),
+  syncAdminUsers: (payload: unknown) => request<{ created: number; updated: number; skipped: number }>(`${apiPath}/admin/users/sync`, { method: 'POST', body: JSON.stringify(payload) }),
   feishuStatus: () => request<{ worker: string; deliveries: unknown[] }>(`${apiPath}/admin/feishu/status`)
 }

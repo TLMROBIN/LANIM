@@ -20,7 +20,17 @@ from .models import (
     TeachingRoute,
     User,
 )
-from .schemas import ConversationCreate, ConversationOut, ImageOut, MessageCreate, MessageOut
+from .schemas import (
+    AdminUserCreate,
+    AdminUserOut,
+    AdminUserUpdate,
+    ConversationCreate,
+    ConversationOut,
+    ImageOut,
+    MessageCreate,
+    MessageOut,
+    TeacherProfileOut,
+)
 
 
 def ensure_teacher(session: Session, teacher_id: int) -> User:
@@ -31,6 +41,78 @@ def ensure_teacher(session: Session, teacher_id: int) -> User:
     if profile is None or not profile.enabled:
         raise HTTPException(status_code=400, detail="教师未启用")
     return teacher
+
+
+def admin_user_out(user: User) -> AdminUserOut:
+    profile = user.teacher_profile
+    return AdminUserOut(
+        id=user.id,
+        oidc_sub=user.oidc_sub,
+        username=user.username,
+        display_name=user.display_name,
+        role=user.role,
+        class_id=user.class_id,
+        grade=user.grade,
+        teacher_profile=TeacherProfileOut(
+            enabled=profile.enabled,
+            feishu_open_id=profile.feishu_open_id,
+            feishu_user_id=profile.feishu_user_id,
+        )
+        if profile
+        else None,
+    )
+
+
+def upsert_admin_user(session: Session, payload: AdminUserCreate) -> tuple[User, bool]:
+    oidc_sub = payload.oidc_sub or f"manual:{payload.username}"
+    user = session.scalar(select(User).where(User.oidc_sub == oidc_sub))
+    created = user is None
+    if user is None:
+        user = User(
+            oidc_sub=oidc_sub,
+            username=payload.username,
+            display_name=payload.display_name,
+            role=payload.role,
+        )
+        session.add(user)
+        session.flush()
+    user.username = payload.username
+    user.display_name = payload.display_name
+    user.role = payload.role
+    user.class_id = payload.class_id
+    user.grade = payload.grade
+    if payload.role == Role.teacher.value:
+        if user.teacher_profile is None:
+            user.teacher_profile = TeacherProfile(user_id=user.id, enabled=payload.enabled)
+            session.flush()
+        user.teacher_profile.enabled = payload.enabled
+        user.teacher_profile.feishu_open_id = payload.feishu_open_id
+        user.teacher_profile.feishu_user_id = payload.feishu_user_id
+    return user, created
+
+
+def update_admin_user(session: Session, user: User, payload: AdminUserUpdate) -> User:
+    if payload.username is not None:
+        user.username = payload.username
+    if payload.display_name is not None:
+        user.display_name = payload.display_name
+    if payload.class_id is not None:
+        user.class_id = payload.class_id
+    if payload.grade is not None:
+        user.grade = payload.grade
+    if user.role == Role.teacher.value and any(
+        value is not None for value in (payload.enabled, payload.feishu_open_id, payload.feishu_user_id)
+    ):
+        if user.teacher_profile is None:
+            user.teacher_profile = TeacherProfile(user_id=user.id, enabled=True)
+            session.flush()
+        if payload.enabled is not None:
+            user.teacher_profile.enabled = payload.enabled
+        if payload.feishu_open_id is not None:
+            user.teacher_profile.feishu_open_id = payload.feishu_open_id
+        if payload.feishu_user_id is not None:
+            user.teacher_profile.feishu_user_id = payload.feishu_user_id
+    return user
 
 
 def upload_image(session: Session, media_dir: Path, user: User, file: UploadFile) -> ImageAsset:

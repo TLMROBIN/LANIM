@@ -58,6 +58,33 @@ curl -c cookie.txt -X POST http://127.0.0.1:8000/api/dev/login \
 - 管理员通过 `PUT /api/admin/teachers/{teacher_id}` 维护教师的 `feishu_open_id` 或 `feishu_user_id`。
 - worker 会轮询 queued 投递并调用飞书发送消息 API。教师在飞书回复机器人消息后的事件可接入同一套 `/api/dev/feishu/reply` 处理逻辑；若启用官方长连接 SDK，可把收到的事件用 `app.feishu.extract_reply_event()` 解析后写回该接口对应服务。
 
+## 管理员用户维护
+
+- 登录管理员账号后，管理端会显示“添加用户”“任课路由”“用户列表”。
+- 添加学生：选择角色 `学生`，填写用户名、姓名、班级、年级；如果该学生来自 Keycloak，可填写 OIDC `sub`，否则留空使用手工账号标识。
+- 编辑/删除学生：在“用户列表”点击编辑或删除。已有会话的用户会被保护，避免删除后破坏历史消息。
+- 添加教师：选择角色 `教师`，填写用户名、姓名、飞书 `open_id/user_id`，并保持“启用”。
+- 指定教师班级：在“任课路由”填写班级、科目，选择教师并保存。学生按班级科目自动分配时会使用这张路由表。
+
+## 从统一认证同步用户
+
+Keycloak 中已经汇总 StudyAgent、edusimu、HighSchoolPhysics 的学生数据后，可以把 realm 用户同步到 IM：
+
+```bash
+python -m app.sync_keycloak_users \
+  --keycloak-base-url http://10.50.159.62/auth \
+  --realm school-platform \
+  --admin-user <Keycloak admin> \
+  --admin-password <Keycloak admin password>
+```
+
+同步规则：
+
+- 使用 Keycloak 用户 `id` 作为 IM `oidc_sub`，保证 OIDC 登录后能命中同一用户。
+- 读取 `attributes.role`，只同步 `student`、`teacher`、`admin`。
+- 学生班级优先读取 `attributes.class_id` 或 `attributes.class`，否则回退到 `attributes.grade`。
+- 重复同步会 upsert，不会重复创建同一 SSO 用户。
+
 ## 验证
 
 ```bash

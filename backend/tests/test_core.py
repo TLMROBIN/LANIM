@@ -164,3 +164,113 @@ def test_feishu_reply_maps_back_to_conversation(client: TestClient):
     messages = client.get(f"/api/conversations/{conversation_id}/messages")
     assert [m["content"] for m in messages.json()] == ["飞书能回复吗？", "可以，这里是飞书回复。"]
     assert messages.json()[1]["source"] == "feishu"
+
+
+def test_admin_can_create_edit_delete_students_and_create_teachers(client: TestClient):
+    login(client, "admin", "admin-001", "管理员")
+
+    created_student = client.post(
+        "/api/admin/users",
+        json={
+            "oidc_sub": "kc-stu-1001",
+            "username": "stu1001",
+            "display_name": "赵同学",
+            "role": "student",
+            "class_id": "高一1班",
+            "grade": "高一",
+        },
+    )
+    assert created_student.status_code == 200
+    student = created_student.json()
+    assert student["display_name"] == "赵同学"
+    assert student["class_id"] == "高一1班"
+
+    edited_student = client.put(
+        f"/api/admin/users/{student['id']}",
+        json={"display_name": "赵同学A", "class_id": "高一2班", "grade": "高一"},
+    )
+    assert edited_student.status_code == 200
+    assert edited_student.json()["display_name"] == "赵同学A"
+    assert edited_student.json()["class_id"] == "高一2班"
+
+    created_teacher = client.post(
+        "/api/admin/users",
+        json={
+            "oidc_sub": "kc-tea-physics",
+            "username": "teacher-physics",
+            "display_name": "周老师",
+            "role": "teacher",
+            "feishu_open_id": "ou_zhou",
+            "enabled": True,
+        },
+    )
+    assert created_teacher.status_code == 200
+    teacher = created_teacher.json()
+    assert teacher["role"] == "teacher"
+    assert teacher["teacher_profile"]["feishu_open_id"] == "ou_zhou"
+
+    route = client.post(
+        "/api/admin/routes",
+        json={"class_id": "高一2班", "subject": "物理", "teacher_id": teacher["id"]},
+    )
+    assert route.status_code == 200
+
+    users = client.get("/api/admin/users?role=student").json()
+    assert [item["username"] for item in users] == ["stu1001"]
+
+    deleted = client.delete(f"/api/admin/users/{student['id']}")
+    assert deleted.status_code == 200
+    assert deleted.json()["ok"] is True
+    assert client.get("/api/admin/users?role=student").json() == []
+
+
+def test_admin_sync_users_upserts_sso_students_and_teachers(client: TestClient):
+    login(client, "admin", "admin-001", "管理员")
+
+    response = client.post(
+        "/api/admin/users/sync",
+        json={
+            "users": [
+                {
+                    "oidc_sub": "keycloak-student-1",
+                    "username": "sso-student-1",
+                    "display_name": "SSO学生一",
+                    "role": "student",
+                    "class_id": "高二3班",
+                    "grade": "高二",
+                },
+                {
+                    "oidc_sub": "keycloak-teacher-1",
+                    "username": "sso-teacher-1",
+                    "display_name": "SSO教师一",
+                    "role": "teacher",
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {"created": 2, "updated": 0, "skipped": 0}
+
+    response = client.post(
+        "/api/admin/users/sync",
+        json={
+            "users": [
+                {
+                    "oidc_sub": "keycloak-student-1",
+                    "username": "sso-student-1",
+                    "display_name": "SSO学生一-改",
+                    "role": "student",
+                    "class_id": "高二4班",
+                    "grade": "高二",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    assert response.json() == {"created": 0, "updated": 1, "skipped": 0}
+
+    students = client.get("/api/admin/users?role=student").json()
+    assert students[0]["display_name"] == "SSO学生一-改"
+    assert students[0]["class_id"] == "高二4班"
+    teachers = client.get("/api/admin/users?role=teacher").json()
+    assert teachers[0]["teacher_profile"]["enabled"] is True

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
@@ -17,6 +18,9 @@ from .db import Base, build_sessionmaker
 from .models import Conversation, FeishuDelivery, ImageAsset, Message, Role, TeacherProfile, TeachingRoute, User
 from .realtime import ConnectionManager
 from .schemas import (
+    AdminUserCreate,
+    AdminUserSyncRequest,
+    AdminUserUpdate,
     ConversationCreate,
     DevLoginRequest,
     FeishuDeliveryOut,
@@ -28,6 +32,7 @@ from .schemas import (
 )
 from .services import (
     add_message,
+    admin_user_out,
     conversation_out,
     create_student_conversation,
     get_conversation_for_user,
@@ -35,7 +40,9 @@ from .services import (
     image_out,
     message_out,
     teacher_inbox,
+    update_admin_user,
     upload_image,
+    upsert_admin_user,
 )
 
 
@@ -233,6 +240,67 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
     @app.get("/api/teacher/inbox")
     def inbox(db: Session = Depends(db_session), teacher: User = Depends(require_role(Role.teacher))):
         return teacher_inbox(db, teacher)
+
+    @app.get("/api/admin/users")
+    def list_admin_users(role: Optional[str] = None, db: Session = Depends(db_session), _: User = Depends(require_role(Role.admin))):
+        stmt = select(User).options(selectinload(User.teacher_profile)).order_by(User.role, User.username)
+        if role:
+            stmt = stmt.where(User.role == role)
+        return [admin_user_out(item) for item in db.scalars(stmt).unique().all()]
+
+    @app.post("/api/admin/users")
+    def create_admin_user(payload: AdminUserCreate, db: Session = Depends(db_session), _: User = Depends(require_role(Role.admin))):
+        exists = db.scalar(select(User).where(User.oidc_sub == (payload.oidc_sub or f"manual:{payload.username}")))
+        if exists is not None:
+            raise HTTPException(status_code=409, detail="用户已存在")
+        user, _ = upsert_admin_user(db, payload)
+        db.commit()
+        db.refresh(user)
+        return admin_user_out(user)
+
+    @app.post("/api/admin/users/sync")
+    def sync_admin_users(payload: AdminUserSyncRequest, db: Session = Depends(db_session), _: User = Depends(require_role(Role.admin))):
+        created = updated = skipped = 0
+        for item in payload.users:
+            if item.role not in {Role.student.value, Role.teacher.value, Role.admin.value}:
+                skipped += 1
+                continue
+            _, was_created = upsert_admin_user(db, item)
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+        db.commit()
+        return {"created": created, "updated": updated, "skipped": skipped}
+
+    @app.put("/api/admin/users/{user_id}")
+    def update_user(user_id: int, payload: AdminUserUpdate, db: Session = Depends(db_session), _: User = Depends(require_role(Role.admin))):
+        user = db.scalar(select(User).options(selectinload(User.teacher_profile)).where(User.id == user_id))
+        if user is None:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        update_admin_user(db, user, payload)
+        db.commit()
+        db.refresh(user)
+        return admin_user_out(user)
+
+    @app.delete("/api/admin/users/{user_id}")
+    def delete_user(user_id: int, db: Session = Depends(db_session), _: User = Depends(require_role(Role.admin))):
+        user = db.get(User, user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        conversation = db.scalar(
+            select(Conversation.id).where((Conversation.student_id == user_id) | (Conversation.teacher_id == user_id)).limit(1)
+        )
+        if conversation is not None:
+            raise HTTPException(status_code=409, detail="用户已有会话，不能删除")
+        routes = db.scalars(select(TeachingRoute).where(TeachingRoute.teacher_id == user_id)).all()
+        for route in routes:
+            db.delete(route)
+        if user.teacher_profile is not None:
+            db.delete(user.teacher_profile)
+        db.delete(user)
+        db.commit()
+        return {"ok": True}
 
     @app.post("/api/conversations/{conversation_id}/assign")
     def assign_conversation(
