@@ -1,9 +1,11 @@
 import io
+import inspect
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import feishu_worker
 from app.sync_keycloak_users import keycloak_user_to_admin_user
 from app.main import create_app
 
@@ -84,6 +86,10 @@ def test_keycloak_sync_accepts_uppercase_role_attributes():
     assert payload.username == "20260002"
     assert payload.display_name == "李四"
     assert payload.grade == "2"
+
+
+def test_feishu_worker_main_is_sync_for_lark_long_connection():
+    assert inspect.iscoroutinefunction(feishu_worker.main) is False
 
 
 def test_student_cannot_access_teacher_or_admin_apis(client: TestClient):

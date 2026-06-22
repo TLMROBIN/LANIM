@@ -79,7 +79,7 @@ def start_long_connection(session_factory, settings: Settings) -> None:
     client.start()
 
 
-async def main() -> None:
+def main() -> None:
     settings = Settings()
     session_factory = build_sessionmaker(settings.database_url)
     Base.metadata.create_all(session_factory.kw["bind"])
@@ -89,4 +89,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
