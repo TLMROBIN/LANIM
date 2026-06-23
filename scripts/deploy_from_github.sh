@@ -74,7 +74,11 @@ echo "[3/5] Build Docker images"
 compose build
 
 echo "[4/5] Start Docker Compose services"
-compose up -d
+if ! compose up -d; then
+  echo "Compose up failed. Recreating application containers and retrying once." >&2
+  compose rm -sf api feishu-worker web
+  compose up -d
+fi
 
 echo "[5/5] Verify health"
 for _ in 1 2 3 4 5 6 7 8 9 10; do
