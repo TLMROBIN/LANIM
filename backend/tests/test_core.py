@@ -345,3 +345,37 @@ def test_admin_users_are_paginated(client: TestClient):
     assert body["page_size"] == 2
     assert body["pages"] == 3
     assert [item["username"] for item in body["items"]] == ["stu-page-2", "stu-page-3"]
+
+
+def test_admin_users_can_be_filtered_by_class_and_grade(client: TestClient):
+    login(client, "admin", "admin-001", "管理员")
+
+    for index, class_id, grade in [
+        (1, "高一1班", "高一"),
+        (2, "高一2班", "高一"),
+        (3, "高二1班", "高二"),
+    ]:
+        response = client.post(
+            "/api/admin/users",
+            json={
+                "oidc_sub": f"kc-stu-filter-{index}",
+                "username": f"stu-filter-{index}",
+                "display_name": f"筛选学生{index}",
+                "role": "student",
+                "class_id": class_id,
+                "grade": grade,
+            },
+        )
+        assert response.status_code == 200
+
+    by_class = client.get("/api/admin/users?role=student&class_id=高一2班").json()
+    assert by_class["total"] == 1
+    assert [item["username"] for item in by_class["items"]] == ["stu-filter-2"]
+
+    by_grade = client.get("/api/admin/users?role=student&grade=高一").json()
+    assert by_grade["total"] == 2
+    assert [item["username"] for item in by_grade["items"]] == ["stu-filter-1", "stu-filter-2"]
+
+    options = client.get("/api/admin/user-options").json()
+    assert options["classes"] == ["高一1班", "高一2班", "高二1班"]
+    assert options["grades"] == ["高一", "高二"]

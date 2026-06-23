@@ -41,9 +41,16 @@ export const api = {
   },
   routes: () => request<{ id: number; class_id: string; subject: string; teacher_id: number }[]>(`${apiPath}/admin/routes`),
   createRoute: (payload: unknown) => request(`${apiPath}/admin/routes`, { method: 'POST', body: JSON.stringify(payload) }),
-  adminUsers: (params: { role?: string; page?: number; pageSize?: number } = {}) =>
+  adminUserOptions: () => request<{ classes: string[]; grades: string[] }>(`${apiPath}/admin/user-options`),
+  adminUsers: (params: { role?: string; classId?: string; grade?: string; page?: number; pageSize?: number } = {}) =>
     request<Paginated<AdminUser>>(
-      `${apiPath}/admin/users${queryString({ role: params.role, page: params.page, page_size: params.pageSize })}`
+      `${apiPath}/admin/users${queryString({
+        role: params.role,
+        class_id: params.classId,
+        grade: params.grade,
+        page: params.page,
+        page_size: params.pageSize
+      })}`
     ),
   createAdminUser: (payload: unknown) => request<AdminUser>(`${apiPath}/admin/users`, { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminUser: (id: number, payload: unknown) => request<AdminUser>(`${apiPath}/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),

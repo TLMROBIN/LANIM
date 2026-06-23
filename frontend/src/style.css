@@ -83,6 +83,17 @@ textarea {
   width: 100%;
 }
 
+input[type="checkbox"] {
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0;
+  width: 18px;
+}
+
+select[multiple] {
+  min-height: 142px;
+}
+
 textarea {
   resize: vertical;
 }
@@ -139,6 +150,22 @@ textarea {
 
 .list-toolbar {
   margin-bottom: 14px;
+}
+
+.filters {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 14px;
+}
+
+.filters label {
+  margin: 0;
+}
+
+.filters span {
+  display: block;
+  margin-bottom: 8px;
 }
 
 .list-toolbar .muted {
@@ -223,6 +250,13 @@ textarea {
   margin-top: 4px;
 }
 
+.user-main {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
 .row-actions {
   display: flex;
   gap: 8px;
@@ -236,6 +270,7 @@ textarea {
   }
 
   .session-actions,
+  .filters,
   .list-toolbar {
     align-items: stretch;
     display: grid;

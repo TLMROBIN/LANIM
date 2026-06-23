@@ -15,6 +15,9 @@ const adminUserPage = ref(1)
 const adminUserPageSize = 20
 const adminUserTotal = ref(0)
 const adminUserPages = ref(1)
+const adminUserFilters = ref({ role: '', classId: '', grade: '' })
+const adminUserOptions = ref<{ classes: string[]; grades: string[] }>({ classes: [], grades: [] })
+const selectedAdminUserIds = ref<number[]>([])
 const error = ref('')
 const sending = ref(false)
 
@@ -24,7 +27,7 @@ const subject = ref('物理')
 const content = ref('')
 const selectedImage = ref<File | null>(null)
 
-const routeClass = ref('高一1班')
+const routeClasses = ref<string[]>([])
 const routeSubject = ref('物理')
 const routeTeacherId = ref<number | ''>('')
 const userForm = ref({
@@ -47,6 +50,23 @@ const isTeacher = computed(() => me.value?.role === 'teacher')
 const isAdmin = computed(() => me.value?.role === 'admin')
 const canGoPreviousUserPage = computed(() => adminUserPage.value > 1)
 const canGoNextUserPage = computed(() => adminUserPage.value < adminUserPages.value)
+const adminTeachers = computed(() => teachers.value)
+const classOptions = computed(() =>
+  Array.from(
+    new Set([
+      ...adminUserOptions.value.classes,
+      ...adminUsers.value.map((user) => user.class_id || ''),
+      ...routes.value.map((route) => route.class_id)
+    ])
+  )
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+)
+const currentPageUserIds = computed(() => adminUsers.value.map((user) => user.id))
+const selectedAdminUsers = computed(() => adminUsers.value.filter((user) => selectedAdminUserIds.value.includes(user.id)))
+const isCurrentPageSelected = computed(
+  () => currentPageUserIds.value.length > 0 && currentPageUserIds.value.every((id) => selectedAdminUserIds.value.includes(id))
+)
 
 async function loadMe() {
   try {
@@ -63,16 +83,30 @@ async function loadReferenceData() {
   if (isAdmin.value) {
     await loadAdminUsers()
     routes.value = await api.routes()
+    adminUserOptions.value = await api.adminUserOptions()
     feishuStatus.value = await api.feishuStatus()
   }
 }
 
 async function loadAdminUsers() {
-  const page = await api.adminUsers({ page: adminUserPage.value, pageSize: adminUserPageSize })
+  const page = await api.adminUsers({
+    role: adminUserFilters.value.role,
+    classId: adminUserFilters.value.classId,
+    grade: adminUserFilters.value.grade,
+    page: adminUserPage.value,
+    pageSize: adminUserPageSize
+  })
   adminUsers.value = page.items
   adminUserTotal.value = page.total
   adminUserPage.value = page.page
   adminUserPages.value = page.pages
+  selectedAdminUserIds.value = selectedAdminUserIds.value.filter((id) => page.items.some((user) => user.id === id))
+}
+
+async function applyAdminUserFilters() {
+  adminUserPage.value = 1
+  selectedAdminUserIds.value = []
+  await loadAdminUsers()
 }
 
 async function changeAdminUserPage(direction: -1 | 1) {
@@ -94,6 +128,8 @@ function clearSessionState() {
   adminUserPage.value = 1
   adminUserTotal.value = 0
   adminUserPages.value = 1
+  selectedAdminUserIds.value = []
+  adminUserOptions.value = { classes: [], grades: [] }
 }
 
 async function logout() {
@@ -147,9 +183,12 @@ async function teacherReply() {
 }
 
 async function createRoute() {
-  if (!routeTeacherId.value) return
-  await api.createRoute({ class_id: routeClass.value, subject: routeSubject.value, teacher_id: routeTeacherId.value })
+  if (!routeTeacherId.value || routeClasses.value.length === 0) return
+  for (const classId of routeClasses.value) {
+    await api.createRoute({ class_id: classId, subject: routeSubject.value, teacher_id: routeTeacherId.value })
+  }
   routes.value = await api.routes()
+  adminUserOptions.value = await api.adminUserOptions()
 }
 
 function resetUserForm() {
@@ -203,6 +242,7 @@ async function saveUser() {
     }
     resetUserForm()
     await loadAdminUsers()
+    adminUserOptions.value = await api.adminUserOptions()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
@@ -217,12 +257,19 @@ async function deleteUser(user: AdminUser) {
       adminUserPage.value -= 1
       await loadAdminUsers()
     }
+    adminUserOptions.value = await api.adminUserOptions()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
 }
 
-const adminTeachers = computed(() => teachers.value)
+function toggleCurrentPageUsers() {
+  if (isCurrentPageSelected.value) {
+    selectedAdminUserIds.value = selectedAdminUserIds.value.filter((id) => !currentPageUserIds.value.includes(id))
+    return
+  }
+  selectedAdminUserIds.value = Array.from(new Set([...selectedAdminUserIds.value, ...currentPageUserIds.value]))
+}
 
 function connectSocket() {
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -358,13 +405,18 @@ onMounted(async () => {
 
       <div class="card">
         <h2>任课路由</h2>
-        <input v-model="routeClass" placeholder="班级，如 高一1班" />
+        <label>班级</label>
+        <select v-model="routeClasses" multiple size="6">
+          <option v-for="classId in classOptions" :key="classId" :value="classId">{{ classId }}</option>
+        </select>
         <input v-model="routeSubject" placeholder="科目，如 物理" />
         <select v-model="routeTeacherId">
           <option disabled value="">选择教师</option>
           <option v-for="teacher in adminTeachers" :key="teacher.id" :value="teacher.id">{{ teacher.display_name }}</option>
         </select>
-        <button class="button primary" @click="createRoute">保存路由</button>
+        <button class="button primary" :disabled="routeClasses.length === 0 || !routeTeacherId" @click="createRoute">
+          保存 {{ routeClasses.length || '' }} 个班级路由
+        </button>
         <ul>
           <li v-for="route in routes" :key="route.id">{{ route.class_id }} / {{ route.subject }} → #{{ route.teacher_id }}</li>
         </ul>
@@ -372,9 +424,40 @@ onMounted(async () => {
 
       <div class="card wide">
         <h2>用户列表</h2>
+        <div class="filters">
+          <label>
+            <span>角色</span>
+            <select v-model="adminUserFilters.role" @change="applyAdminUserFilters">
+              <option value="">全部角色</option>
+              <option value="student">学生</option>
+              <option value="teacher">教师</option>
+              <option value="admin">管理员</option>
+            </select>
+          </label>
+          <label>
+            <span>班级</span>
+            <select v-model="adminUserFilters.classId" @change="applyAdminUserFilters">
+              <option value="">全部班级</option>
+              <option v-for="classId in classOptions" :key="classId" :value="classId">{{ classId }}</option>
+            </select>
+          </label>
+          <label>
+            <span>年级</span>
+            <select v-model="adminUserFilters.grade" @change="applyAdminUserFilters">
+              <option value="">全部年级</option>
+              <option v-for="grade in adminUserOptions.grades" :key="grade" :value="grade">{{ grade }}</option>
+            </select>
+          </label>
+        </div>
         <div class="list-toolbar">
-          <p class="muted">共 {{ adminUserTotal }} 个用户，第 {{ adminUserPage }} / {{ adminUserPages }} 页</p>
+          <p class="muted">
+            共 {{ adminUserTotal }} 个用户，第 {{ adminUserPage }} / {{ adminUserPages }} 页，已选 {{ selectedAdminUsers.length }} 个
+          </p>
           <div class="row-actions">
+            <button class="button" :disabled="adminUsers.length === 0" @click="toggleCurrentPageUsers">
+              {{ isCurrentPageSelected ? '取消当前页' : '选择当前页' }}
+            </button>
+            <button class="button" :disabled="selectedAdminUserIds.length === 0" @click="selectedAdminUserIds = []">清空选择</button>
             <button class="button" @click="loadAdminUsers">刷新用户</button>
             <button class="button" :disabled="!canGoPreviousUserPage" @click="changeAdminUserPage(-1)">上一页</button>
             <button class="button" :disabled="!canGoNextUserPage" @click="changeAdminUserPage(1)">下一页</button>
@@ -382,12 +465,15 @@ onMounted(async () => {
         </div>
         <div class="user-table">
           <div v-for="user in adminUsers" :key="user.id" class="user-row">
-            <div>
-              <strong>{{ user.display_name }}</strong>
-              <span>{{ user.role }} · {{ user.username }} · {{ user.class_id || '无班级' }}</span>
-              <small v-if="user.teacher_profile">
-                飞书：{{ user.teacher_profile.feishu_open_id || '未绑定' }} · {{ user.teacher_profile.enabled ? '启用' : '停用' }}
-              </small>
+            <div class="user-main">
+              <input v-model="selectedAdminUserIds" type="checkbox" :value="user.id" :aria-label="`选择 ${user.display_name}`" />
+              <div>
+                <strong>{{ user.display_name }}</strong>
+                <span>{{ user.role }} · {{ user.username }} · {{ user.grade || '无年级' }} · {{ user.class_id || '无班级' }}</span>
+                <small v-if="user.teacher_profile">
+                  飞书：{{ user.teacher_profile.feishu_open_id || '未绑定' }} · {{ user.teacher_profile.enabled ? '启用' : '停用' }}
+                </small>
+              </div>
             </div>
             <div class="row-actions">
               <button class="button" @click="editUser(user)">编辑</button>

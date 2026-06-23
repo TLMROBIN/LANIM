@@ -244,6 +244,8 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
     @app.get("/api/admin/users")
     def list_admin_users(
         role: Optional[str] = None,
+        class_id: Optional[str] = None,
+        grade: Optional[str] = None,
         page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100),
         db: Session = Depends(db_session),
@@ -254,6 +256,12 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         if role:
             stmt = stmt.where(User.role == role)
             count_stmt = count_stmt.where(User.role == role)
+        if class_id:
+            stmt = stmt.where(User.class_id == class_id)
+            count_stmt = count_stmt.where(User.class_id == class_id)
+        if grade:
+            stmt = stmt.where(User.grade == grade)
+            count_stmt = count_stmt.where(User.grade == grade)
         total = db.scalar(count_stmt) or 0
         pages = max((total + page_size - 1) // page_size, 1)
         rows = db.scalars(stmt.offset((page - 1) * page_size).limit(page_size)).unique().all()
@@ -318,6 +326,18 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         db.delete(user)
         db.commit()
         return {"ok": True}
+
+    @app.get("/api/admin/user-options")
+    def admin_user_options(db: Session = Depends(db_session), _: User = Depends(require_role(Role.admin))):
+        user_classes = db.scalars(
+            select(User.class_id).where(User.class_id.is_not(None), User.class_id != "").distinct()
+        ).all()
+        route_classes = db.scalars(select(TeachingRoute.class_id).where(TeachingRoute.class_id != "").distinct()).all()
+        grades = db.scalars(select(User.grade).where(User.grade.is_not(None), User.grade != "").distinct()).all()
+        return {
+            "classes": sorted({item for item in [*user_classes, *route_classes] if item}),
+            "grades": sorted({item for item in grades if item}),
+        }
 
     @app.post("/api/conversations/{conversation_id}/assign")
     def assign_conversation(
