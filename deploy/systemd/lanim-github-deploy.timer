@@ -1,0 +1,12 @@
+[Unit]
+Description=Check GitHub for LANIM updates every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=15s
+Persistent=true
+Unit=lanim-github-deploy.service
+
+[Install]
+WantedBy=timers.target

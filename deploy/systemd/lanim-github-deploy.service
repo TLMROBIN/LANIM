@@ -1,0 +1,11 @@
+[Unit]
+Description=Deploy LANIM updates from GitHub
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/yub/文档/trae_projects/LANIM
+ExecStart=/home/yub/文档/trae_projects/LANIM/scripts/deploy_from_github.sh
+TimeoutStartSec=1200
+
