@@ -11,6 +11,10 @@ const selectedConversation = ref<Conversation | null>(null)
 const routes = ref<{ id: number; class_id: string; subject: string; teacher_id: number }[]>([])
 const feishuStatus = ref<{ worker: string; deliveries: unknown[] } | null>(null)
 const adminUsers = ref<AdminUser[]>([])
+const adminUserPage = ref(1)
+const adminUserPageSize = 20
+const adminUserTotal = ref(0)
+const adminUserPages = ref(1)
 const error = ref('')
 const sending = ref(false)
 
@@ -41,6 +45,8 @@ const loginUrl = `${basePath}/api/auth/oidc/login`
 const isStudent = computed(() => me.value?.role === 'student')
 const isTeacher = computed(() => me.value?.role === 'teacher')
 const isAdmin = computed(() => me.value?.role === 'admin')
+const canGoPreviousUserPage = computed(() => adminUserPage.value > 1)
+const canGoNextUserPage = computed(() => adminUserPage.value < adminUserPages.value)
 
 async function loadMe() {
   try {
@@ -55,9 +61,48 @@ async function loadReferenceData() {
   teachers.value = await api.teachers().catch(() => [])
   if (isTeacher.value) conversations.value = await api.inbox()
   if (isAdmin.value) {
-    adminUsers.value = await api.adminUsers()
+    await loadAdminUsers()
     routes.value = await api.routes()
     feishuStatus.value = await api.feishuStatus()
+  }
+}
+
+async function loadAdminUsers() {
+  const page = await api.adminUsers({ page: adminUserPage.value, pageSize: adminUserPageSize })
+  adminUsers.value = page.items
+  adminUserTotal.value = page.total
+  adminUserPage.value = page.page
+  adminUserPages.value = page.pages
+}
+
+async function changeAdminUserPage(direction: -1 | 1) {
+  const nextPage = adminUserPage.value + direction
+  if (nextPage < 1 || nextPage > adminUserPages.value) return
+  adminUserPage.value = nextPage
+  await loadAdminUsers()
+}
+
+function clearSessionState() {
+  me.value = null
+  teachers.value = []
+  conversations.value = []
+  messages.value = []
+  selectedConversation.value = null
+  routes.value = []
+  feishuStatus.value = null
+  adminUsers.value = []
+  adminUserPage.value = 1
+  adminUserTotal.value = 0
+  adminUserPages.value = 1
+}
+
+async function logout() {
+  error.value = ''
+  try {
+    await api.logout()
+    clearSessionState()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
   }
 }
 
@@ -157,7 +202,7 @@ async function saveUser() {
       await api.createAdminUser(payload)
     }
     resetUserForm()
-    await loadReferenceData()
+    await loadAdminUsers()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
@@ -167,13 +212,17 @@ async function deleteUser(user: AdminUser) {
   error.value = ''
   try {
     await api.deleteAdminUser(user.id)
-    await loadReferenceData()
+    await loadAdminUsers()
+    if (adminUsers.value.length === 0 && adminUserPage.value > 1) {
+      adminUserPage.value -= 1
+      await loadAdminUsers()
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   }
 }
 
-const adminTeachers = computed(() => adminUsers.value.filter((user) => user.role === 'teacher'))
+const adminTeachers = computed(() => teachers.value)
 
 function connectSocket() {
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
@@ -204,7 +253,10 @@ onMounted(async () => {
         <h1>校园即时通讯</h1>
       </div>
       <a v-if="!me" class="button primary" :href="loginUrl">通过统一认证登录</a>
-      <div v-else class="user-pill">{{ me.display_name }} · {{ me.role }}</div>
+      <div v-else class="session-actions">
+        <div class="user-pill">{{ me.display_name }} · {{ me.role }}</div>
+        <button class="button" @click="logout">退出登录</button>
+      </div>
     </header>
 
     <section v-if="!me" class="card">
@@ -320,7 +372,14 @@ onMounted(async () => {
 
       <div class="card wide">
         <h2>用户列表</h2>
-        <button class="button" @click="loadReferenceData">刷新用户与路由</button>
+        <div class="list-toolbar">
+          <p class="muted">共 {{ adminUserTotal }} 个用户，第 {{ adminUserPage }} / {{ adminUserPages }} 页</p>
+          <div class="row-actions">
+            <button class="button" @click="loadAdminUsers">刷新用户</button>
+            <button class="button" :disabled="!canGoPreviousUserPage" @click="changeAdminUserPage(-1)">上一页</button>
+            <button class="button" :disabled="!canGoNextUserPage" @click="changeAdminUserPage(1)">下一页</button>
+          </div>
+        </div>
         <div class="user-table">
           <div v-for="user in adminUsers" :key="user.id" class="user-row">
             <div>
@@ -335,6 +394,7 @@ onMounted(async () => {
               <button class="button danger" @click="deleteUser(user)">删除</button>
             </div>
           </div>
+          <p v-if="adminUsers.length === 0" class="muted">当前页没有用户。</p>
         </div>
       </div>
 

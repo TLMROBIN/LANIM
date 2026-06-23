@@ -5,10 +5,10 @@ from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -242,11 +242,28 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         return teacher_inbox(db, teacher)
 
     @app.get("/api/admin/users")
-    def list_admin_users(role: Optional[str] = None, db: Session = Depends(db_session), _: User = Depends(require_role(Role.admin))):
+    def list_admin_users(
+        role: Optional[str] = None,
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100),
+        db: Session = Depends(db_session),
+        _: User = Depends(require_role(Role.admin)),
+    ):
         stmt = select(User).options(selectinload(User.teacher_profile)).order_by(User.role, User.username)
+        count_stmt = select(func.count()).select_from(User)
         if role:
             stmt = stmt.where(User.role == role)
-        return [admin_user_out(item) for item in db.scalars(stmt).unique().all()]
+            count_stmt = count_stmt.where(User.role == role)
+        total = db.scalar(count_stmt) or 0
+        pages = max((total + page_size - 1) // page_size, 1)
+        rows = db.scalars(stmt.offset((page - 1) * page_size).limit(page_size)).unique().all()
+        return {
+            "items": [admin_user_out(item) for item in rows],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": pages,
+        }
 
     @app.post("/api/admin/users")
     def create_admin_user(payload: AdminUserCreate, db: Session = Depends(db_session), _: User = Depends(require_role(Role.admin))):

@@ -18,6 +18,14 @@ export interface AdminUser extends User {
   teacher_profile?: TeacherProfile | null
 }
 
+export interface Paginated<T> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
+}
+
 export interface ImageAsset {
   id: number
   url: string

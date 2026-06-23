@@ -1,4 +1,4 @@
-import type { AdminUser, Conversation, Message, User } from './types'
+import type { AdminUser, Conversation, Message, Paginated, User } from './types'
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
 const apiPath = `${basePath}/api`
@@ -16,8 +16,18 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return response.json()
 }
 
+function queryString(params: Record<string, string | number | undefined>) {
+  const query = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== '') query.set(key, String(value))
+  }
+  const text = query.toString()
+  return text ? `?${text}` : ''
+}
+
 export const api = {
   me: () => request<User>(`${apiPath}/me`),
+  logout: () => request<{ ok: boolean }>(`${apiPath}/auth/logout`, { method: 'POST' }),
   teachers: () => request<User[]>(`${apiPath}/teachers`),
   subjects: (classId: string) => request<{ subject: string; teacher_id: number }[]>(`${apiPath}/subjects?class_id=${encodeURIComponent(classId)}`),
   createConversation: (payload: unknown) => request<Conversation>(`${apiPath}/conversations`, { method: 'POST', body: JSON.stringify(payload) }),
@@ -31,7 +41,10 @@ export const api = {
   },
   routes: () => request<{ id: number; class_id: string; subject: string; teacher_id: number }[]>(`${apiPath}/admin/routes`),
   createRoute: (payload: unknown) => request(`${apiPath}/admin/routes`, { method: 'POST', body: JSON.stringify(payload) }),
-  adminUsers: (role = '') => request<AdminUser[]>(`${apiPath}/admin/users${role ? `?role=${encodeURIComponent(role)}` : ''}`),
+  adminUsers: (params: { role?: string; page?: number; pageSize?: number } = {}) =>
+    request<Paginated<AdminUser>>(
+      `${apiPath}/admin/users${queryString({ role: params.role, page: params.page, page_size: params.pageSize })}`
+    ),
   createAdminUser: (payload: unknown) => request<AdminUser>(`${apiPath}/admin/users`, { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminUser: (id: number, payload: unknown) => request<AdminUser>(`${apiPath}/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteAdminUser: (id: number) => request<{ ok: boolean }>(`${apiPath}/admin/users/${id}`, { method: 'DELETE' }),

@@ -258,13 +258,13 @@ def test_admin_can_create_edit_delete_students_and_create_teachers(client: TestC
     )
     assert route.status_code == 200
 
-    users = client.get("/api/admin/users?role=student").json()
+    users = client.get("/api/admin/users?role=student").json()["items"]
     assert [item["username"] for item in users] == ["stu1001"]
 
     deleted = client.delete(f"/api/admin/users/{student['id']}")
     assert deleted.status_code == 200
     assert deleted.json()["ok"] is True
-    assert client.get("/api/admin/users?role=student").json() == []
+    assert client.get("/api/admin/users?role=student").json()["items"] == []
 
 
 def test_admin_sync_users_upserts_sso_students_and_teachers(client: TestClient):
@@ -312,8 +312,36 @@ def test_admin_sync_users_upserts_sso_students_and_teachers(client: TestClient):
     assert response.status_code == 200
     assert response.json() == {"created": 0, "updated": 1, "skipped": 0}
 
-    students = client.get("/api/admin/users?role=student").json()
+    students = client.get("/api/admin/users?role=student").json()["items"]
     assert students[0]["display_name"] == "SSO学生一-改"
     assert students[0]["class_id"] == "高二4班"
-    teachers = client.get("/api/admin/users?role=teacher").json()
+    teachers = client.get("/api/admin/users?role=teacher").json()["items"]
     assert teachers[0]["teacher_profile"]["enabled"] is True
+
+
+def test_admin_users_are_paginated(client: TestClient):
+    login(client, "admin", "admin-001", "管理员")
+
+    for index in range(5):
+        response = client.post(
+            "/api/admin/users",
+            json={
+                "oidc_sub": f"kc-stu-page-{index}",
+                "username": f"stu-page-{index}",
+                "display_name": f"分页学生{index}",
+                "role": "student",
+                "class_id": "高一1班",
+                "grade": "高一",
+            },
+        )
+        assert response.status_code == 200
+
+    response = client.get("/api/admin/users?role=student&page=2&page_size=2")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 5
+    assert body["page"] == 2
+    assert body["page_size"] == 2
+    assert body["pages"] == 3
+    assert [item["username"] for item in body["items"]] == ["stu-page-2", "stu-page-3"]

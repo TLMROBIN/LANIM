@@ -124,6 +124,27 @@ textarea {
   padding: 10px 16px;
 }
 
+.session-actions,
+.list-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.session-actions .button,
+.list-toolbar .button {
+  margin-top: 0;
+}
+
+.list-toolbar {
+  margin-bottom: 14px;
+}
+
+.list-toolbar .muted {
+  margin: 0;
+}
+
 .alert {
   background: #fff2f0;
   border: 1px solid #ffc7c1;
@@ -212,6 +233,13 @@ textarea {
   .grid,
   .topbar {
     display: block;
+  }
+
+  .session-actions,
+  .list-toolbar {
+    align-items: stretch;
+    display: grid;
+    margin-top: 14px;
   }
 
   .card {
