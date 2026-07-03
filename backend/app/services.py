@@ -157,6 +157,21 @@ def resolve_teacher(session: Session, student: User, data: ConversationCreate) -
     return ensure_teacher(session, route.teacher_id)
 
 
+def can_access_image(session: Session, user: User, asset: ImageAsset) -> bool:
+    """图片访问控制：仅上传者、图片所属会话的师生双方或管理员可访问。"""
+    if asset.owner_id == user.id or user.role == Role.admin.value:
+        return True
+    if asset.message_id is None:
+        return False
+    message = session.get(Message, asset.message_id)
+    if message is None:
+        return False
+    conversation = session.get(Conversation, message.conversation_id)
+    if conversation is None:
+        return False
+    return user.id in (conversation.student_id, conversation.teacher_id)
+
+
 def attach_images(session: Session, message: Message, image_ids: list[int], owner: User) -> None:
     for image_id in image_ids:
         asset = session.get(ImageAsset, image_id)

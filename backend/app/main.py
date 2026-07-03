@@ -33,6 +33,7 @@ from .schemas import (
 from .services import (
     add_message,
     admin_user_out,
+    can_access_image,
     conversation_out,
     create_student_conversation,
     get_conversation_for_user,
@@ -199,6 +200,8 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         asset = db.get(ImageAsset, image_id)
         if asset is None:
             raise HTTPException(status_code=404, detail="图片不存在")
+        if not can_access_image(db, user, asset):
+            raise HTTPException(status_code=403, detail="无权访问该图片")
         path = settings.media_dir / asset.path
         if not path.exists():
             raise HTTPException(status_code=404, detail="图片文件不存在")
