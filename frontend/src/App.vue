@@ -139,7 +139,12 @@ async function logout() {
     clearSessionState()
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
+    return
   }
+  window.location.href =
+    'http://192.168.1.206/auth/realms/school-platform/protocol/openid-connect/logout' +
+    '?client_id=im&post_logout_redirect_uri=' +
+    encodeURIComponent('http://192.168.1.206/im/')
 }
 
 async function refreshMessages(conversation: Conversation) {
