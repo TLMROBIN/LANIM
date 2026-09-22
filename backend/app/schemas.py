@@ -20,6 +20,10 @@ class TeacherUpdate(BaseModel):
     feishu_user_id: Optional[str] = None
 
 
+class FeishuTeacherResolveRequest(BaseModel):
+    mobile: str = Field(min_length=5, max_length=32)
+
+
 class TeacherProfileOut(BaseModel):
     enabled: bool
     feishu_open_id: Optional[str] = None

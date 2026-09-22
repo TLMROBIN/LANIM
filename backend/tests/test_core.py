@@ -1,11 +1,13 @@
 import io
+import asyncio
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app import feishu_worker
+from app import feishu, feishu_worker
 from app.sync_keycloak_users import keycloak_user_to_admin_user
 from app.main import create_app
 
@@ -97,6 +99,63 @@ def test_student_cannot_access_teacher_or_admin_apis(client: TestClient):
 
     assert client.get("/api/teacher/inbox").status_code == 403
     assert client.get("/api/admin/feishu/status").status_code == 403
+
+
+def test_admin_can_bind_teacher_feishu_by_mobile(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    login(client, "teacher", "tea-resolve", "待绑定老师")
+    teacher_id = client.get("/api/me").json()["id"]
+    login(client, "admin", "admin-resolve", "管理员")
+
+    async def fake_resolve(self, mobile: str) -> str:
+        assert mobile == "13800138000"
+        return "ou_resolved_teacher"
+
+    monkeypatch.setattr(feishu.FeishuClient, "resolve_open_id_by_mobile", fake_resolve)
+    response = client.post(
+        f"/api/admin/teachers/{teacher_id}/feishu/resolve",
+        json={"mobile": "13800138000"},
+    )
+    assert response.status_code == 200
+    assert response.json()["feishu_open_id"] == "ou_resolved_teacher"
+
+    users = client.get("/api/admin/users?role=teacher").json()["items"]
+    teacher = next(item for item in users if item["id"] == teacher_id)
+    assert teacher["teacher_profile"]["feishu_open_id"] == "ou_resolved_teacher"
+
+
+def test_feishu_mobile_lookup_uses_open_id_and_mobile(monkeypatch: pytest.MonkeyPatch):
+    calls = {}
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"code": 0, "data": {"user_list": [{"user_id": "ou_lookup"}]}}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, url, **kwargs):
+            calls["url"] = url
+            calls.update(kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr(feishu.httpx, "AsyncClient", lambda **kwargs: FakeClient())
+    client = feishu.FeishuClient(SimpleNamespace(feishu_app_id="app", feishu_app_secret="secret"))
+
+    async def fake_token():
+        return "tenant-token"
+
+    monkeypatch.setattr(client, "tenant_access_token", fake_token)
+    assert asyncio.run(client.resolve_open_id_by_mobile("13800138000")) == "ou_lookup"
+    assert calls["url"].endswith("/contact/v3/users/batch_get_id")
+    assert calls["params"] == {"user_id_type": "open_id"}
+    assert calls["json"] == {"mobiles": ["13800138000"]}
 
 
 def test_student_sends_direct_text_and_image_to_teacher(client: TestClient):

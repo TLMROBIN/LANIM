@@ -55,6 +55,25 @@ class FeishuClient:
                 raise RuntimeError(f"Feishu send error: {body}")
             return body["data"]["message_id"]
 
+    async def resolve_open_id_by_mobile(self, mobile: str) -> str:
+        """Resolve one teacher's app-scoped open_id from a mobile number."""
+        token = await self.tenant_access_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id",
+                params={"user_id_type": "open_id"},
+                headers={"Authorization": f"Bearer {token}"},
+                json={"mobiles": [mobile]},
+            )
+            response.raise_for_status()
+            body = response.json()
+            if body.get("code") != 0:
+                raise RuntimeError(f"Feishu user lookup error: {body}")
+            users = (body.get("data") or {}).get("user_list") or []
+            if len(users) != 1 or not users[0].get("user_id"):
+                raise LookupError("未找到与该手机号匹配的飞书用户")
+            return users[0]["user_id"]
+
 
 async def flush_queued_deliveries(session_factory: sessionmaker[Session], settings: Settings) -> int:
     client = FeishuClient(settings)

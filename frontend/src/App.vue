@@ -39,6 +39,7 @@ const userForm = ref({
   class_id: '',
   grade: '',
   enabled: true,
+  feishu_mobile: '',
   feishu_open_id: '',
   feishu_user_id: ''
 })
@@ -206,6 +207,7 @@ function resetUserForm() {
     class_id: '',
     grade: '',
     enabled: true,
+    feishu_mobile: '',
     feishu_open_id: '',
     feishu_user_id: ''
   }
@@ -221,6 +223,7 @@ function editUser(user: AdminUser) {
     class_id: user.class_id || '',
     grade: user.grade || '',
     enabled: user.teacher_profile?.enabled ?? true,
+    feishu_mobile: '',
     feishu_open_id: user.teacher_profile?.feishu_open_id || '',
     feishu_user_id: user.teacher_profile?.feishu_user_id || ''
   }
@@ -235,15 +238,17 @@ async function saveUser() {
     role: userForm.value.role,
     class_id: userForm.value.class_id || undefined,
     grade: userForm.value.grade || undefined,
-    enabled: userForm.value.enabled,
-    feishu_open_id: userForm.value.feishu_open_id || undefined,
-    feishu_user_id: userForm.value.feishu_user_id || undefined
+    enabled: userForm.value.enabled
   }
   try {
+    let savedUser: AdminUser
     if (userForm.value.id) {
-      await api.updateAdminUser(userForm.value.id, payload)
+      savedUser = await api.updateAdminUser(userForm.value.id, payload)
     } else {
-      await api.createAdminUser(payload)
+      savedUser = await api.createAdminUser(payload)
+    }
+    if (savedUser.role === 'teacher' && userForm.value.feishu_mobile.trim()) {
+      await api.resolveTeacherFeishu(savedUser.id, userForm.value.feishu_mobile.trim())
     }
     resetUserForm()
     await loadAdminUsers()
@@ -399,10 +404,9 @@ onMounted(async () => {
             <option :value="true">启用</option>
             <option :value="false">停用</option>
           </select>
-          <label>飞书 open_id</label>
-          <input v-model="userForm.feishu_open_id" placeholder="ou_xxx" />
-          <label>飞书 user_id</label>
-          <input v-model="userForm.feishu_user_id" placeholder="可选" />
+          <label>飞书手机号</label>
+          <input v-model="userForm.feishu_mobile" placeholder="填写后自动查询并绑定 Open ID" />
+          <small v-if="userForm.feishu_open_id" class="muted">当前已绑定飞书账号；填写新手机号可重新绑定。</small>
         </template>
         <button class="button primary" @click="saveUser">保存用户</button>
         <button v-if="userForm.id" class="button" @click="resetUserForm">取消编辑</button>

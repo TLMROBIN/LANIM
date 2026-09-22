@@ -55,7 +55,9 @@ curl -c cookie.txt -X POST http://127.0.0.1:8000/api/dev/login \
 
 - 在飞书开放平台创建企业自建应用，开启机器人能力。
 - 配置 `IM_FEISHU_APP_ID` 和 `IM_FEISHU_APP_SECRET`。
-- 管理员通过 `PUT /api/admin/teachers/{teacher_id}` 维护教师的 `feishu_open_id` 或 `feishu_user_id`。
+- 应用需要开通“通过手机号或邮箱获取用户 ID”权限，并让应用有权限查看目标教师。
+- 事件订阅选择长连接并添加 `im.message.receive_v1`；应用发布后，worker 才会接收教师回复。
+- 管理员在教师资料中填写手机号，系统通过飞书通讯录接口自动查询并保存该应用下的 `open_id`；后端接口为 `POST /api/admin/teachers/{teacher_id}/feishu/resolve`。
 - worker 会轮询 queued 投递并调用飞书发送消息 API。教师在飞书回复机器人消息后的事件可接入同一套 `/api/dev/feishu/reply` 处理逻辑；若启用官方长连接 SDK，可把收到的事件用 `app.feishu.extract_reply_event()` 解析后写回该接口对应服务。
 
 ## 管理员用户维护

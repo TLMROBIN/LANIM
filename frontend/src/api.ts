@@ -54,6 +54,11 @@ export const api = {
     ),
   createAdminUser: (payload: unknown) => request<AdminUser>(`${apiPath}/admin/users`, { method: 'POST', body: JSON.stringify(payload) }),
   updateAdminUser: (id: number, payload: unknown) => request<AdminUser>(`${apiPath}/admin/users/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  resolveTeacherFeishu: (id: number, mobile: string) =>
+    request<{ ok: boolean; teacher_id: number; feishu_open_id: string }>(`${apiPath}/admin/teachers/${id}/feishu/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ mobile })
+    }),
   deleteAdminUser: (id: number) => request<{ ok: boolean }>(`${apiPath}/admin/users/${id}`, { method: 'DELETE' }),
   syncAdminUsers: (payload: unknown) => request<{ created: number; updated: number; skipped: number }>(`${apiPath}/admin/users/sync`, { method: 'POST', body: JSON.stringify(payload) }),
   feishuStatus: () => request<{ worker: string; deliveries: unknown[] }>(`${apiPath}/admin/feishu/status`)

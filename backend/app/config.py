@@ -21,4 +21,6 @@ class Settings(BaseSettings):
     feishu_verification_token: Optional[str] = None
     dev_auth_enabled: bool = False
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="IM_")
+    # Compose also uses a few unprefixed values in the root .env. Ignore
+    # those when the application settings are loaded locally.
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="IM_", extra="ignore")

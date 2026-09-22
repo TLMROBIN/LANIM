@@ -15,6 +15,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .auth import current_user, require_role, upsert_user_from_claims
 from .config import Settings
 from .db import Base, build_sessionmaker
+from .feishu import FeishuClient
 from .models import Conversation, FeishuDelivery, ImageAsset, Message, Role, TeacherProfile, TeachingRoute, User
 from .realtime import ConnectionManager
 from .schemas import (
@@ -25,6 +26,7 @@ from .schemas import (
     DevLoginRequest,
     FeishuDeliveryOut,
     FeishuReplyEvent,
+    FeishuTeacherResolveRequest,
     MessageCreate,
     RouteCreate,
     TeacherUpdate,
@@ -384,6 +386,31 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         teacher.teacher_profile.feishu_user_id = payload.feishu_user_id
         db.commit()
         return {"ok": True}
+
+    @app.post("/api/admin/teachers/{teacher_id}/feishu/resolve")
+    async def resolve_teacher_feishu(
+        teacher_id: int,
+        payload: FeishuTeacherResolveRequest,
+        db: Session = Depends(db_session),
+        _: User = Depends(require_role(Role.admin)),
+    ):
+        teacher = db.get(User, teacher_id)
+        if teacher is None or teacher.role != Role.teacher.value:
+            raise HTTPException(status_code=404, detail="教师不存在")
+        mobile = payload.mobile.strip()
+        if len(mobile) < 5:
+            raise HTTPException(status_code=422, detail="请输入有效的手机号")
+        try:
+            open_id = await FeishuClient(settings).resolve_open_id_by_mobile(mobile)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"飞书用户查询失败：{exc}") from exc
+        if teacher.teacher_profile is None:
+            teacher.teacher_profile = TeacherProfile(user_id=teacher.id, enabled=True)
+        teacher.teacher_profile.feishu_open_id = open_id
+        db.commit()
+        return {"ok": True, "teacher_id": teacher.id, "feishu_open_id": open_id}
 
     @app.post("/api/admin/routes")
     def create_route(payload: RouteCreate, db: Session = Depends(db_session), _: User = Depends(require_role(Role.admin))):
