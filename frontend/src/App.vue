@@ -20,6 +20,9 @@ const adminUserOptions = ref<{ classes: string[]; grades: string[] }>({ classes:
 const selectedAdminUserIds = ref<number[]>([])
 const error = ref('')
 const sending = ref(false)
+const userSaving = ref(false)
+const routeSaving = ref(false)
+const routeSavedNotice = ref('')
 
 const studentMode = ref<'direct' | 'route'>('direct')
 const selectedTeacherId = ref<number | ''>('')
@@ -28,6 +31,7 @@ const content = ref('')
 const selectedImage = ref<File | null>(null)
 
 const routeClasses = ref<string[]>([])
+const routeClassInput = ref('')
 const routeSubject = ref('物理')
 const routeTeacherId = ref<number | ''>('')
 const userForm = ref({
@@ -189,12 +193,54 @@ async function teacherReply() {
 }
 
 async function createRoute() {
-  if (!routeTeacherId.value || routeClasses.value.length === 0) return
-  for (const classId of routeClasses.value) {
-    await api.createRoute({ class_id: classId, subject: routeSubject.value, teacher_id: routeTeacherId.value })
+  error.value = ''
+  routeSavedNotice.value = ''
+  if (routeClasses.value.length === 0) {
+    error.value = '请先选择或添加至少一个班级。'
+    return
   }
-  routes.value = await api.routes()
-  adminUserOptions.value = await api.adminUserOptions()
+  if (!routeTeacherId.value) {
+    error.value = '请先选择任课教师。'
+    return
+  }
+  if (!routeSubject.value.trim()) {
+    error.value = '请填写科目。'
+    return
+  }
+  routeSaving.value = true
+  try {
+    for (const classId of routeClasses.value) {
+      await api.createRoute({ class_id: classId, subject: routeSubject.value.trim(), teacher_id: routeTeacherId.value })
+    }
+    routes.value = await api.routes()
+    adminUserOptions.value = await api.adminUserOptions()
+    routeSavedNotice.value = `已保存 ${routeClasses.value.length} 个班级路由。`
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+    routes.value = await api.routes().catch(() => routes.value)
+  } finally {
+    routeSaving.value = false
+  }
+}
+
+function toggleRouteClass(classId: string) {
+  routeSavedNotice.value = ''
+  routeClasses.value = routeClasses.value.includes(classId)
+    ? routeClasses.value.filter((selected) => selected !== classId)
+    : [...routeClasses.value, classId]
+}
+
+function addRouteClass() {
+  const classId = routeClassInput.value.trim()
+  if (!classId) return
+  if (!routeClasses.value.includes(classId)) routeClasses.value = [...routeClasses.value, classId]
+  routeClassInput.value = ''
+  routeSavedNotice.value = ''
+}
+
+function removeRouteClass(classId: string) {
+  routeClasses.value = routeClasses.value.filter((selected) => selected !== classId)
+  routeSavedNotice.value = ''
 }
 
 function resetUserForm() {
@@ -231,6 +277,9 @@ function editUser(user: AdminUser) {
 
 async function saveUser() {
   error.value = ''
+  userSaving.value = true
+  let savedUser: AdminUser | undefined
+  let feishuBindingAttempted = false
   const payload = {
     oidc_sub: userForm.value.oidc_sub || undefined,
     username: userForm.value.username,
@@ -241,20 +290,29 @@ async function saveUser() {
     enabled: userForm.value.enabled
   }
   try {
-    let savedUser: AdminUser
     if (userForm.value.id) {
       savedUser = await api.updateAdminUser(userForm.value.id, payload)
     } else {
       savedUser = await api.createAdminUser(payload)
     }
     if (savedUser.role === 'teacher' && userForm.value.feishu_mobile.trim()) {
+      feishuBindingAttempted = true
       await api.resolveTeacherFeishu(savedUser.id, userForm.value.feishu_mobile.trim())
     }
     resetUserForm()
     await loadAdminUsers()
     adminUserOptions.value = await api.adminUserOptions()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    const message = err instanceof Error ? err.message : String(err)
+    error.value = feishuBindingAttempted
+      ? `用户资料已保存，但飞书绑定未完成：${message}`
+      : message
+    if (savedUser) {
+      await loadAdminUsers().catch(() => undefined)
+      adminUserOptions.value = await api.adminUserOptions().catch(() => adminUserOptions.value)
+    }
+  } finally {
+    userSaving.value = false
   }
 }
 
@@ -408,24 +466,57 @@ onMounted(async () => {
           <input v-model="userForm.feishu_mobile" placeholder="填写后自动查询并绑定 Open ID" />
           <small v-if="userForm.feishu_open_id" class="muted">当前已绑定飞书账号；填写新手机号可重新绑定。</small>
         </template>
-        <button class="button primary" @click="saveUser">保存用户</button>
+        <button class="button primary" :disabled="userSaving" @click="saveUser">
+          {{ userSaving ? '正在保存…' : '保存用户' }}
+        </button>
         <button v-if="userForm.id" class="button" @click="resetUserForm">取消编辑</button>
       </div>
 
       <div class="card">
         <h2>任课路由</h2>
         <label>班级</label>
-        <select v-model="routeClasses" multiple size="6">
-          <option v-for="classId in classOptions" :key="classId" :value="classId">{{ classId }}</option>
-        </select>
+        <div v-if="classOptions.length" class="route-class-list">
+          <label v-for="classId in classOptions" :key="classId" class="route-class-option">
+            <input
+              type="checkbox"
+              :checked="routeClasses.includes(classId)"
+              @change="toggleRouteClass(classId)"
+            />
+            <span>{{ classId }}</span>
+          </label>
+        </div>
+        <p v-else class="muted">暂无现有班级，可在下方输入班级名添加。</p>
+        <div class="route-class-entry">
+          <input
+            v-model="routeClassInput"
+            placeholder="输入班级名，例如 高一1班"
+            @keydown.enter.prevent="addRouteClass"
+          />
+          <button class="button" type="button" :disabled="!routeClassInput.trim()" @click="addRouteClass">添加班级</button>
+        </div>
+        <div v-if="routeClasses.length" class="route-selected-classes">
+          <span v-for="classId in routeClasses" :key="classId" class="route-class-chip">
+            {{ classId }}
+            <button type="button" :aria-label="`移除 ${classId}`" @click="removeRouteClass(classId)">×</button>
+          </span>
+        </div>
         <input v-model="routeSubject" placeholder="科目，如 物理" />
         <select v-model="routeTeacherId">
           <option disabled value="">选择教师</option>
           <option v-for="teacher in adminTeachers" :key="teacher.id" :value="teacher.id">{{ teacher.display_name }}</option>
         </select>
-        <button class="button primary" :disabled="routeClasses.length === 0 || !routeTeacherId" @click="createRoute">
-          保存 {{ routeClasses.length || '' }} 个班级路由
+        <p v-if="adminTeachers.length === 0" class="muted">当前没有可用教师，请先启用教师账号。</p>
+        <p v-else-if="routeClasses.length === 0" class="muted">先选择或添加班级，再选择教师保存。</p>
+        <p v-else-if="!routeTeacherId" class="muted">请选择任课教师后再保存。</p>
+        <p v-else-if="!routeSubject.trim()" class="muted">请填写科目后再保存。</p>
+        <button
+          class="button primary"
+          :disabled="routeSaving || routeClasses.length === 0 || !routeTeacherId || !routeSubject.trim()"
+          @click="createRoute"
+        >
+          {{ routeSaving ? '正在保存…' : `保存 ${routeClasses.length || ''} 个班级路由` }}
         </button>
+        <p v-if="routeSavedNotice" class="success-note">{{ routeSavedNotice }}</p>
         <ul>
           <li v-for="route in routes" :key="route.id">{{ route.class_id }} / {{ route.subject }} → #{{ route.teacher_id }}</li>
         </ul>

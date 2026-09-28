@@ -62,13 +62,33 @@ class FeishuClient:
             response = await client.post(
                 "https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id",
                 params={"user_id_type": "open_id"},
-                headers={"Authorization": f"Bearer {token}"},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json; charset=utf-8",
+                },
                 json={"mobiles": [mobile]},
             )
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                try:
+                    error_body = response.json()
+                except ValueError:
+                    error_body = {}
+                code = error_body.get("code")
+                message = error_body.get("msg") or error_body.get("message")
+                details = []
+                if code is not None:
+                    details.append(f"code {code}")
+                if message:
+                    details.append(str(message))
+                suffix = f" ({'; '.join(details)})" if details else ""
+                raise RuntimeError(f"飞书通讯录接口返回 HTTP {response.status_code}{suffix}") from exc
             body = response.json()
             if body.get("code") != 0:
-                raise RuntimeError(f"Feishu user lookup error: {body}")
+                code = body.get("code", "unknown")
+                message = body.get("msg") or body.get("message") or "未知错误"
+                raise RuntimeError(f"飞书通讯录接口错误 code {code}: {message}")
             users = (body.get("data") or {}).get("user_list") or []
             if len(users) != 1 or not users[0].get("user_id"):
                 raise LookupError("未找到与该手机号匹配的飞书用户")
