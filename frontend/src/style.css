@@ -157,6 +157,12 @@ textarea {
   margin: 10px 0 0;
 }
 
+.route-error-note {
+  color: #b42318;
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+
 .button {
   background: #eef3ff;
   border: 0;
@@ -232,12 +238,21 @@ textarea {
 }
 
 .alert {
+  align-items: flex-start;
   background: #fff2f0;
   border: 1px solid #ffc7c1;
   border-radius: 14px;
   color: #b42318;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   margin-bottom: 16px;
   padding: 12px 14px;
+}
+
+.alert a {
+  color: #24427a;
+  font-weight: 700;
 }
 
 .muted {

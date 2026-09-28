@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { api } from './api'
 import type { AdminUser, Conversation, Message, User } from './types'
 
+type RouteClassOption = { key: string; label: string; classIds: string[] }
+
 const me = ref<User | null>(null)
 const teachers = ref<User[]>([])
 const conversations = ref<Conversation[]>([])
@@ -19,6 +21,7 @@ const adminUserFilters = ref({ role: '', classId: '', grade: '' })
 const adminUserOptions = ref<{ classes: string[]; grades: string[] }>({ classes: [], grades: [] })
 const selectedAdminUserIds = ref<number[]>([])
 const error = ref('')
+const routeError = ref('')
 const sending = ref(false)
 const userSaving = ref(false)
 const routeSaving = ref(false)
@@ -32,6 +35,7 @@ const selectedImage = ref<File | null>(null)
 
 const routeClasses = ref<string[]>([])
 const routeClassInput = ref('')
+const manualRouteClassIds = ref<string[]>([])
 const routeSubject = ref('物理')
 const routeTeacherId = ref<number | ''>('')
 const userForm = ref({
@@ -56,7 +60,8 @@ const isAdmin = computed(() => me.value?.role === 'admin')
 const canGoPreviousUserPage = computed(() => adminUserPage.value > 1)
 const canGoNextUserPage = computed(() => adminUserPage.value < adminUserPages.value)
 const adminTeachers = computed(() => teachers.value)
-const classOptions = computed(() =>
+const feishuPermissionUrl = computed(() => error.value.match(/https:\/\/open\.feishu\.cn\/app\/[^\s)]+/)?.[0] || '')
+const knownClassIds = computed(() =>
   Array.from(
     new Set([
       ...adminUserOptions.value.classes,
@@ -64,9 +69,56 @@ const classOptions = computed(() =>
       ...routes.value.map((route) => route.class_id)
     ])
   )
+    .map((classId) => classId.trim())
     .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
 )
+const classOptions = computed(() => [...knownClassIds.value].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN')))
+const routeClassOptions = computed<RouteClassOption[]>(() => {
+  const groups = new Map<string, Set<string>>()
+  for (const classId of [...knownClassIds.value, ...manualRouteClassIds.value]) {
+    const key = normalizeClassKey(classId)
+    if (!key) continue
+    const classIds = groups.get(key) ?? new Set<string>()
+    classIds.add(classId)
+    groups.set(key, classIds)
+  }
+  return [...groups.entries()]
+    .map(([key, classIdSet]) => {
+      const classIds = [...classIdSet]
+      const label = [...classIds].sort((left, right) => {
+        const suffixOrder = Number(right.endsWith('班')) - Number(left.endsWith('班'))
+        if (suffixOrder) return suffixOrder
+        const spacingOrder = Number(/\s/.test(right)) - Number(/\s/.test(left))
+        return spacingOrder || left.localeCompare(right, 'zh-Hans-CN')
+      })[0]
+      return { key, label, classIds }
+    })
+    .sort((left, right) => left.label.localeCompare(right.label, 'zh-Hans-CN'))
+})
+const routeDisplayItems = computed(() => {
+  const groups = new Map<string, { classKey: string; subject: string; teacherId: number; classIds: Set<string> }>()
+  for (const route of routes.value) {
+    const classKey = normalizeClassKey(route.class_id)
+    const key = `${classKey}\u0000${route.subject}\u0000${route.teacher_id}`
+    const group = groups.get(key) ?? { classKey, subject: route.subject, teacherId: route.teacher_id, classIds: new Set<string>() }
+    group.classIds.add(route.class_id)
+    groups.set(key, group)
+  }
+  return [...groups.values()].map((group) => ({
+    classLabel: routeClassOptions.value.find((option) => option.key === group.classKey)?.label || group.classKey,
+    classIds: [...group.classIds],
+    subject: group.subject,
+    teacherId: group.teacherId
+  }))
+})
+
+function normalizeClassKey(classId: string) {
+  return classId.trim().replace(/\s+/g, '').replace(/班$/, '')
+}
+
+function routeClassLabel(key: string) {
+  return routeClassOptions.value.find((option) => option.key === key)?.label || key
+}
 const currentPageUserIds = computed(() => adminUsers.value.map((user) => user.id))
 const selectedAdminUsers = computed(() => adminUsers.value.filter((user) => selectedAdminUserIds.value.includes(user.id)))
 const isCurrentPageSelected = computed(
@@ -193,30 +245,34 @@ async function teacherReply() {
 }
 
 async function createRoute() {
-  error.value = ''
+  routeError.value = ''
   routeSavedNotice.value = ''
   if (routeClasses.value.length === 0) {
-    error.value = '请先选择或添加至少一个班级。'
+    routeError.value = '请先选择或添加至少一个班级。'
     return
   }
   if (!routeTeacherId.value) {
-    error.value = '请先选择任课教师。'
+    routeError.value = '请先选择任课教师。'
     return
   }
   if (!routeSubject.value.trim()) {
-    error.value = '请填写科目。'
+    routeError.value = '请填写科目。'
     return
   }
   routeSaving.value = true
   try {
-    for (const classId of routeClasses.value) {
+    const classIdsToSave = new Set(
+      routeClasses.value.flatMap((key) => routeClassOptions.value.find((option) => option.key === key)?.classIds || [routeClassLabel(key)])
+    )
+    for (const classId of classIdsToSave) {
       await api.createRoute({ class_id: classId, subject: routeSubject.value.trim(), teacher_id: routeTeacherId.value })
     }
     routes.value = await api.routes()
     adminUserOptions.value = await api.adminUserOptions()
+    manualRouteClassIds.value = []
     routeSavedNotice.value = `已保存 ${routeClasses.value.length} 个班级路由。`
   } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
+    routeError.value = err instanceof Error ? err.message : String(err)
     routes.value = await api.routes().catch(() => routes.value)
   } finally {
     routeSaving.value = false
@@ -224,6 +280,7 @@ async function createRoute() {
 }
 
 function toggleRouteClass(classId: string) {
+  routeError.value = ''
   routeSavedNotice.value = ''
   routeClasses.value = routeClasses.value.includes(classId)
     ? routeClasses.value.filter((selected) => selected !== classId)
@@ -233,13 +290,18 @@ function toggleRouteClass(classId: string) {
 function addRouteClass() {
   const classId = routeClassInput.value.trim()
   if (!classId) return
-  if (!routeClasses.value.includes(classId)) routeClasses.value = [...routeClasses.value, classId]
+  const key = normalizeClassKey(classId)
+  if (!key) return
+  if (!manualRouteClassIds.value.includes(classId)) manualRouteClassIds.value = [...manualRouteClassIds.value, classId]
+  if (!routeClasses.value.includes(key)) routeClasses.value = [...routeClasses.value, key]
   routeClassInput.value = ''
+  routeError.value = ''
   routeSavedNotice.value = ''
 }
 
-function removeRouteClass(classId: string) {
-  routeClasses.value = routeClasses.value.filter((selected) => selected !== classId)
+function removeRouteClass(classKey: string) {
+  routeClasses.value = routeClasses.value.filter((selected) => selected !== classKey)
+  routeError.value = ''
   routeSavedNotice.value = ''
 }
 
@@ -379,7 +441,17 @@ onMounted(async () => {
       <p>系统使用学校 Keycloak/OIDC 统一认证。学生实名提问，教师通过 Web 或飞书回复。</p>
     </section>
 
-    <section v-if="error" class="alert">{{ error }}</section>
+    <section v-if="error" class="alert" role="alert">
+      <span>{{ error }}</span>
+      <a
+        v-if="feishuPermissionUrl"
+        :href="feishuPermissionUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        打开飞书权限设置并申请 contact:user.id:readonly
+      </a>
+    </section>
 
     <section v-if="isStudent" class="grid">
       <div class="card">
@@ -475,14 +547,14 @@ onMounted(async () => {
       <div class="card">
         <h2>任课路由</h2>
         <label>班级</label>
-        <div v-if="classOptions.length" class="route-class-list">
-          <label v-for="classId in classOptions" :key="classId" class="route-class-option">
+        <div v-if="routeClassOptions.length" class="route-class-list">
+          <label v-for="option in routeClassOptions" :key="option.key" class="route-class-option">
             <input
               type="checkbox"
-              :checked="routeClasses.includes(classId)"
-              @change="toggleRouteClass(classId)"
+              :checked="routeClasses.includes(option.key)"
+              @change="toggleRouteClass(option.key)"
             />
-            <span>{{ classId }}</span>
+            <span>{{ option.label }}</span>
           </label>
         </div>
         <p v-else class="muted">暂无现有班级，可在下方输入班级名添加。</p>
@@ -495,9 +567,9 @@ onMounted(async () => {
           <button class="button" type="button" :disabled="!routeClassInput.trim()" @click="addRouteClass">添加班级</button>
         </div>
         <div v-if="routeClasses.length" class="route-selected-classes">
-          <span v-for="classId in routeClasses" :key="classId" class="route-class-chip">
-            {{ classId }}
-            <button type="button" :aria-label="`移除 ${classId}`" @click="removeRouteClass(classId)">×</button>
+          <span v-for="classKey in routeClasses" :key="classKey" class="route-class-chip">
+            {{ routeClassLabel(classKey) }}
+            <button type="button" :aria-label="`移除 ${routeClassLabel(classKey)}`" @click="removeRouteClass(classKey)">×</button>
           </span>
         </div>
         <input v-model="routeSubject" placeholder="科目，如 物理" />
@@ -509,16 +581,23 @@ onMounted(async () => {
         <p v-else-if="routeClasses.length === 0" class="muted">先选择或添加班级，再选择教师保存。</p>
         <p v-else-if="!routeTeacherId" class="muted">请选择任课教师后再保存。</p>
         <p v-else-if="!routeSubject.trim()" class="muted">请填写科目后再保存。</p>
+        <p v-if="routeError" class="route-error-note" role="alert">{{ routeError }}</p>
         <button
           class="button primary"
-          :disabled="routeSaving || routeClasses.length === 0 || !routeTeacherId || !routeSubject.trim()"
+          :disabled="routeSaving"
           @click="createRoute"
         >
-          {{ routeSaving ? '正在保存…' : `保存 ${routeClasses.length || ''} 个班级路由` }}
+          {{ routeSaving ? '正在保存…' : `保存 ${routeClasses.length} 个班级路由` }}
         </button>
-        <p v-if="routeSavedNotice" class="success-note">{{ routeSavedNotice }}</p>
+        <p v-if="routeSavedNotice" class="success-note" role="status">{{ routeSavedNotice }}</p>
         <ul>
-          <li v-for="route in routes" :key="route.id">{{ route.class_id }} / {{ route.subject }} → #{{ route.teacher_id }}</li>
+          <li
+            v-for="route in routeDisplayItems"
+            :key="`${route.classLabel}-${route.subject}-${route.teacherId}`"
+            :title="route.classIds.length > 1 ? `原始写法：${route.classIds.join('、')}` : undefined"
+          >
+            {{ route.classLabel }} / {{ route.subject }} → #{{ route.teacherId }}
+          </li>
         </ul>
       </div>
 
