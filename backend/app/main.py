@@ -174,21 +174,26 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         return user
 
     @app.get("/api/teachers")
-    def teachers(db: Session = Depends(db_session), _: User = Depends(current_user)):
-        rows = (
-            db.scalars(
-                select(User)
-                .join(TeacherProfile)
-                .where(User.role == Role.teacher.value, TeacherProfile.enabled.is_(True))
-                .order_by(User.display_name)
-            )
-            .unique()
-            .all()
+    def teachers(db: Session = Depends(db_session), user: User = Depends(current_user)):
+        query = select(User).join(TeacherProfile).where(
+            User.role == Role.teacher.value,
+            TeacherProfile.enabled.is_(True),
         )
+        if user.role == Role.student.value:
+            if not user.class_id:
+                return []
+            query = (
+                query.join(TeachingRoute, TeachingRoute.teacher_id == User.id)
+                .where(TeachingRoute.class_id == user.class_id)
+                .distinct()
+            )
+        rows = db.scalars(query.order_by(User.display_name)).unique().all()
         return [UserOut.model_validate(row, from_attributes=True).model_dump() for row in rows]
 
     @app.get("/api/subjects")
-    def subjects(class_id: str, db: Session = Depends(db_session), _: User = Depends(current_user)):
+    def subjects(class_id: str, db: Session = Depends(db_session), user: User = Depends(current_user)):
+        if user.role == Role.student.value and class_id != user.class_id:
+            raise HTTPException(status_code=403, detail="学生只能查询自己班级的任课信息")
         routes = db.scalars(select(TeachingRoute).where(TeachingRoute.class_id == class_id).order_by(TeachingRoute.subject)).all()
         return [{"subject": route.subject, "teacher_id": route.teacher_id} for route in routes]
 
@@ -240,6 +245,14 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         db.commit()
         out = message_out(message)
         peer_id = conversation.teacher_id if user.id == conversation.student_id else conversation.student_id
+        if user.id == conversation.student_id:
+            hydrated = get_conversation_for_user(db, conversation_id, user)
+            updated = conversation_out(db, hydrated, user)
+            await app.state.manager.send_to_user(
+                conversation.teacher_id,
+                "conversation.updated",
+                updated.model_dump(mode="json"),
+            )
         await app.state.manager.send_to_user(peer_id, "message.created", out.model_dump(mode="json"))
         return out
 

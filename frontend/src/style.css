@@ -281,6 +281,18 @@ textarea {
   margin-top: 28px;
 }
 
+.active-conversation {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 8px 0 16px;
+}
+
+.active-conversation p {
+  margin: 0;
+}
+
 .conversation span,
 .conversation small {
   color: #69758a;

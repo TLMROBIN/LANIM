@@ -143,7 +143,20 @@ def resolve_teacher(session: Session, student: User, data: ConversationCreate) -
     if data.mode == "direct":
         if not data.teacher_id:
             raise HTTPException(status_code=400, detail="直接选择教师时必须提供 teacher_id")
-        return ensure_teacher(session, data.teacher_id)
+        if not student.class_id:
+            raise HTTPException(status_code=403, detail="当前学生未绑定班级，无法联系教师")
+        teacher = ensure_teacher(session, data.teacher_id)
+        associated = session.scalar(
+            select(TeachingRoute.id)
+            .where(
+                TeachingRoute.class_id == student.class_id,
+                TeachingRoute.teacher_id == teacher.id,
+            )
+            .limit(1)
+        )
+        if associated is None:
+            raise HTTPException(status_code=403, detail="该教师未关联当前学生所在班级")
+        return teacher
     if not student.class_id:
         raise HTTPException(status_code=400, detail="当前学生缺少班级信息，无法按班级科目分配")
     if not data.subject:
@@ -214,6 +227,19 @@ def create_student_conversation(session: Session, student: User, data: Conversat
 def add_message(session: Session, conversation: Conversation, sender: User, data: MessageCreate, source: str = MessageSource.web.value) -> Message:
     if sender.id not in {conversation.student_id, conversation.teacher_id}:
         raise HTTPException(status_code=403, detail="不能访问该会话")
+    if sender.role == Role.student.value:
+        if not sender.class_id:
+            raise HTTPException(status_code=403, detail="当前学生未绑定班级，无法联系教师")
+        associated = session.scalar(
+            select(TeachingRoute.id)
+            .where(
+                TeachingRoute.class_id == sender.class_id,
+                TeachingRoute.teacher_id == conversation.teacher_id,
+            )
+            .limit(1)
+        )
+        if associated is None:
+            raise HTTPException(status_code=403, detail="该教师未关联当前学生所在班级")
     message = Message(
         conversation_id=conversation.id,
         sender_id=sender.id,
@@ -224,6 +250,8 @@ def add_message(session: Session, conversation: Conversation, sender: User, data
     session.add(message)
     session.flush()
     attach_images(session, message, data.image_ids, sender)
+    if sender.role == Role.student.value and source == MessageSource.web.value:
+        create_feishu_delivery(session, conversation, message, conversation.teacher)
     conversation.updated_at = datetime.utcnow()
     return message
 

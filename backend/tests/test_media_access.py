@@ -38,6 +38,13 @@ def test_media_access_is_limited_to_conversation_members(client: TestClient):
     # 教师先登录建档
     login(client, "teacher", "tea-media", "李老师")
     teacher_id = client.get("/api/me").json()["id"]
+    login(client, "admin", "adm-media", "管理员")
+    client.put(f"/api/admin/teachers/{teacher_id}", json={"enabled": True})
+    route = client.post(
+        "/api/admin/routes",
+        json={"class_id": "高一1班", "subject": "物理", "teacher_id": teacher_id},
+    )
+    assert route.status_code == 200
 
     # 学生 A 上传图片并向教师提问
     login(client, "student", "stu-media-a", "学生甲", class_id=["高一1班"])

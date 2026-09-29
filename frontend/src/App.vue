@@ -32,6 +32,9 @@ const selectedTeacherId = ref<number | ''>('')
 const subject = ref('物理')
 const content = ref('')
 const selectedImage = ref<File | null>(null)
+const uploadedImageId = ref<number | null>(null)
+const studentImageInput = ref<HTMLInputElement | null>(null)
+const teacherImageInput = ref<HTMLInputElement | null>(null)
 let studentMessagePoller: number | null = null
 let studentMessagePollActive = false
 let socket: WebSocket | null = null
@@ -243,23 +246,51 @@ async function pollStudentMessages() {
 
 async function uploadSelectedImage() {
   if (!selectedImage.value) return []
+  if (uploadedImageId.value !== null) return [uploadedImageId.value]
   const image = await api.uploadImage(selectedImage.value)
-  selectedImage.value = null
+  uploadedImageId.value = image.id
   return [image.id]
 }
 
+function clearSelectedImage() {
+  selectedImage.value = null
+  uploadedImageId.value = null
+  if (studentImageInput.value) studentImageInput.value.value = ''
+  if (teacherImageInput.value) teacherImageInput.value.value = ''
+}
+
+function onImageSelected(event: Event) {
+  selectedImage.value = (event.target as HTMLInputElement).files?.[0] || null
+  uploadedImageId.value = null
+}
+
+function startNewStudentConversation() {
+  selectedConversation.value = null
+  messages.value = []
+  error.value = ''
+  if (me.value) sessionStorage.removeItem(`im:student-conversation:${me.value.id}`)
+}
+
 async function studentSend() {
-  if (!content.value.trim()) return
+  if (!content.value.trim() && !selectedImage.value) return
   error.value = ''
   sending.value = true
   try {
     const imageIds = await uploadSelectedImage()
-    const payload =
-      studentMode.value === 'direct'
-        ? { mode: 'direct', teacher_id: selectedTeacherId.value, subject: subject.value, content: content.value, image_ids: imageIds }
-        : { mode: 'route', subject: subject.value, content: content.value, image_ids: imageIds }
-    const conversation = await api.createConversation(payload)
+    let conversation: Conversation
+    if (selectedConversation.value) {
+      conversation = selectedConversation.value
+      const sentMessage = await api.postMessage(conversation.id, { content: content.value, image_ids: imageIds })
+      conversation.last_message = sentMessage
+    } else {
+      const payload =
+        studentMode.value === 'direct'
+          ? { mode: 'direct', teacher_id: selectedTeacherId.value, subject: subject.value, content: content.value, image_ids: imageIds }
+          : { mode: 'route', subject: subject.value, content: content.value, image_ids: imageIds }
+      conversation = await api.createConversation(payload)
+    }
     content.value = ''
+    clearSelectedImage()
     conversations.value = [conversation, ...conversations.value.filter((item) => item.id !== conversation.id)]
     await refreshMessages(conversation)
   } catch (err) {
@@ -270,10 +301,11 @@ async function studentSend() {
 }
 
 async function teacherReply() {
-  if (!selectedConversation.value || !content.value.trim()) return
+  if (!selectedConversation.value || (!content.value.trim() && !selectedImage.value)) return
   const imageIds = await uploadSelectedImage()
   await api.postMessage(selectedConversation.value.id, { content: content.value, image_ids: imageIds })
   content.value = ''
+  clearSelectedImage()
   await refreshMessages(selectedConversation.value)
 }
 
@@ -496,23 +528,30 @@ onBeforeUnmount(() => {
 
     <section v-if="isStudent" class="grid">
       <div class="card">
-        <h2>发起提问</h2>
-        <label>路由方式</label>
-        <select v-model="studentMode">
-          <option value="direct">直接选择教师</option>
-          <option value="route">按班级与科目自动分配</option>
-        </select>
-        <label v-if="studentMode === 'direct'">教师</label>
-        <select v-if="studentMode === 'direct'" v-model="selectedTeacherId">
-          <option disabled value="">请选择教师</option>
-          <option v-for="teacher in teachers" :key="teacher.id" :value="teacher.id">{{ teacher.display_name }}</option>
-        </select>
-        <label>科目</label>
-        <input v-model="subject" placeholder="物理" />
+        <h2>{{ selectedConversation ? '继续会话' : '发起提问' }}</h2>
+        <div v-if="selectedConversation" class="active-conversation">
+          <p>当前会话：{{ selectedConversation.teacher_name }} · {{ selectedConversation.subject || '未指定科目' }}</p>
+          <button class="button" @click="startNewStudentConversation">新建会话</button>
+        </div>
+        <template v-else>
+          <label>路由方式</label>
+          <select v-model="studentMode">
+            <option value="direct">直接选择教师</option>
+            <option value="route">按班级与科目自动分配</option>
+          </select>
+          <label v-if="studentMode === 'direct'">教师（仅显示关联本班的教师）</label>
+          <select v-if="studentMode === 'direct'" v-model="selectedTeacherId">
+            <option disabled value="">请选择教师</option>
+            <option v-for="teacher in teachers" :key="teacher.id" :value="teacher.id">{{ teacher.display_name }}</option>
+          </select>
+          <p v-if="studentMode === 'direct' && teachers.length === 0" class="muted">当前班级尚未关联可联系的教师。</p>
+          <label>科目</label>
+          <input v-model="subject" placeholder="物理" />
+        </template>
         <label>问题</label>
         <textarea v-model="content" rows="6" placeholder="请描述你的问题"></textarea>
-        <input type="file" accept="image/*" @change="selectedImage = ($event.target as HTMLInputElement).files?.[0] || null" />
-        <button class="button primary" :disabled="sending" @click="studentSend">发送给教师</button>
+        <input ref="studentImageInput" type="file" accept="image/*" @change="onImageSelected" />
+        <button class="button primary" :disabled="sending" @click="studentSend">{{ selectedConversation ? '发送消息' : '发送给教师' }}</button>
         <h2 class="student-history-title">我的会话</h2>
         <p v-if="conversations.length === 0" class="muted">发送问题后，会话会保留在这里。</p>
         <button
@@ -558,7 +597,7 @@ onBeforeUnmount(() => {
           <img v-for="image in message.images" :key="image.id" :src="assetUrl(image.url)" :alt="image.original_name" />
         </div>
         <textarea v-model="content" rows="4" placeholder="输入回复"></textarea>
-        <input type="file" accept="image/*" @change="selectedImage = ($event.target as HTMLInputElement).files?.[0] || null" />
+        <input ref="teacherImageInput" type="file" accept="image/*" @change="onImageSelected" />
         <button class="button primary" @click="teacherReply">回复</button>
       </div>
     </section>

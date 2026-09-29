@@ -8,10 +8,10 @@ from urllib.parse import quote
 
 import httpx
 from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from .config import Settings
-from .models import FeishuDelivery, FeishuDeliveryStatus
+from .models import FeishuDelivery, FeishuDeliveryStatus, Message
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,42 @@ class FeishuClient:
                     "receive_id": receive_id,
                     "msg_type": "text",
                     "content": json.dumps({"text": text}, ensure_ascii=False),
+                },
+            )
+            response.raise_for_status()
+            body = response.json()
+            if body.get("code") != 0:
+                raise RuntimeError(f"Feishu send error: {body}")
+            return body["data"]["message_id"]
+
+    async def upload_image(self, image: bytes, filename: str, mime_type: str) -> str:
+        token = await self.tenant_access_token()
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                "https://open.feishu.cn/open-apis/im/v1/images",
+                headers={"Authorization": f"Bearer {token}"},
+                data={"image_type": "message"},
+                files={"image": (filename, image, mime_type)},
+            )
+            response.raise_for_status()
+            body = response.json()
+            if body.get("code") != 0:
+                raise RuntimeError(f"Feishu image upload error: {body}")
+            return body["data"]["image_key"]
+
+    async def send_post(self, receive_id: str, title: str, rows: list[list[dict[str, str]]]) -> str:
+        token = await self.tenant_access_token()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                "https://open.feishu.cn/open-apis/im/v1/messages",
+                params={"receive_id_type": "open_id"},
+                headers={"Authorization": f"Bearer {token}"},
+                json={
+                    "receive_id": receive_id,
+                    "msg_type": "post",
+                    "content": json.dumps(
+                        {"zh_cn": {"title": title, "content": rows}}, ensure_ascii=False
+                    ),
                 },
             )
             response.raise_for_status()
@@ -131,7 +167,9 @@ async def flush_queued_deliveries(session_factory: sessionmaker[Session], settin
     sent = 0
     with session_factory() as session:
         deliveries = session.scalars(
-            select(FeishuDelivery).where(FeishuDelivery.status == FeishuDeliveryStatus.queued.value)
+            select(FeishuDelivery)
+            .options(selectinload(FeishuDelivery.message).selectinload(Message.images))
+            .where(FeishuDelivery.status == FeishuDeliveryStatus.queued.value)
         ).all()
         for delivery in deliveries:
             if not delivery.feishu_open_id:
@@ -144,10 +182,28 @@ async def flush_queued_deliveries(session_factory: sessionmaker[Session], settin
                 text = (
                     f"学生：{conversation.student.display_name}\n"
                     f"科目：{conversation.subject or '未指定'}\n"
-                    f"内容：{message.content}\n\n"
-                    "请直接回复本条机器人消息，系统会同步给学生。"
+                    f"内容：{message.content or '（见图片）'}"
                 )
-                delivery.feishu_message_id = await client.send_text(delivery.feishu_open_id, text)
+                if message.images:
+                    rows: list[list[dict[str, str]]] = [[{"tag": "text", "text": text}]]
+                    for image_asset in message.images:
+                        image_data = (settings.media_dir / image_asset.path).read_bytes()
+                        image_key = await client.upload_image(
+                            image_data,
+                            image_asset.original_name,
+                            image_asset.mime_type,
+                        )
+                        rows.append([{"tag": "img", "image_key": image_key}])
+                    rows.append(
+                        [{"tag": "text", "text": "请直接回复本条机器人消息，系统会同步给学生。"}]
+                    )
+                    title = f"学生提问 · {conversation.subject or '未指定科目'}"
+                    delivery.feishu_message_id = await client.send_post(
+                        delivery.feishu_open_id, title, rows
+                    )
+                else:
+                    text += "\n\n请直接回复本条机器人消息，系统会同步给学生。"
+                    delivery.feishu_message_id = await client.send_text(delivery.feishu_open_id, text)
                 delivery.status = FeishuDeliveryStatus.sent.value
                 delivery.error = None
                 sent += 1

@@ -166,6 +166,11 @@ def test_student_sends_direct_text_and_image_to_teacher(client: TestClient):
         f"/api/admin/teachers/{teacher_id}",
         json={"enabled": True, "feishu_open_id": "ou_teacher"},
     )
+    route = client.post(
+        "/api/admin/routes",
+        json={"class_id": "高一1班", "subject": "物理", "teacher_id": teacher_id},
+    )
+    assert route.status_code == 200
 
     login(client, "student", "stu-001", "张三", class_id=["高一1班"])
     upload = client.post(
@@ -198,6 +203,114 @@ def test_student_sends_direct_text_and_image_to_teacher(client: TestClient):
     assert inbox.status_code == 200
     assert inbox.json()[0]["last_message"]["content"] == "这道题为什么选 B？"
     assert inbox.json()[0]["unread_count"] == 1
+
+
+def test_student_can_message_only_teachers_assigned_to_their_class(client: TestClient):
+    login(client, "teacher", "tea-class-a", "高一1班教师")
+    class_a_teacher_id = client.get("/api/me").json()["id"]
+    login(client, "teacher", "tea-class-b", "高一2班教师")
+    class_b_teacher_id = client.get("/api/me").json()["id"]
+
+    login(client, "admin", "admin-classes", "管理员")
+    assert client.put(
+        f"/api/admin/teachers/{class_a_teacher_id}",
+        json={"enabled": True, "feishu_open_id": "ou_class_a_teacher"},
+    ).status_code == 200
+    assert client.put(
+        f"/api/admin/teachers/{class_b_teacher_id}", json={"enabled": True}
+    ).status_code == 200
+    assert client.post(
+        "/api/admin/routes",
+        json={"class_id": "高一1班", "subject": "物理", "teacher_id": class_a_teacher_id},
+    ).status_code == 200
+    assert client.post(
+        "/api/admin/routes",
+        json={"class_id": "高一2班", "subject": "物理", "teacher_id": class_b_teacher_id},
+    ).status_code == 200
+
+    login(client, "student", "stu-class-a", "高一1班学生", class_id=["高一1班"])
+    visible_teachers = client.get("/api/teachers").json()
+    assert [teacher["id"] for teacher in visible_teachers] == [class_a_teacher_id]
+    assert client.get("/api/subjects?class_id=高一2班").status_code == 403
+
+    rejected = client.post(
+        "/api/conversations",
+        json={"mode": "direct", "teacher_id": class_b_teacher_id, "subject": "物理", "content": "越班消息"},
+    )
+    assert rejected.status_code == 403
+
+    created = client.post(
+        "/api/conversations",
+        json={"mode": "direct", "teacher_id": class_a_teacher_id, "subject": "物理", "content": "初始消息"},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["id"]
+    follow_up = client.post(
+        f"/api/conversations/{conversation_id}/messages",
+        json={"content": "接着原会话补充"},
+    )
+    assert follow_up.status_code == 200
+    assert follow_up.json()["conversation_id"] == conversation_id
+
+    login(client, "admin", "admin-classes", "管理员")
+    deliveries = client.get("/api/admin/feishu/status").json()["deliveries"]
+    assert sum(item["conversation_id"] == conversation_id for item in deliveries) == 2
+
+
+def test_queued_feishu_delivery_embeds_student_image_in_rich_text(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    login(client, "teacher", "tea-image-post", "图片教师")
+    teacher_id = client.get("/api/me").json()["id"]
+    login(client, "admin", "admin-image-post", "管理员")
+    client.put(
+        f"/api/admin/teachers/{teacher_id}",
+        json={"enabled": True, "feishu_open_id": "ou_image_teacher"},
+    )
+    client.post(
+        "/api/admin/routes",
+        json={"class_id": "高一1班", "subject": "物理", "teacher_id": teacher_id},
+    )
+
+    login(client, "student", "stu-image-post", "图片学生", class_id=["高一1班"])
+    image = client.post(
+        "/api/uploads/images",
+        files={"file": ("question.png", io.BytesIO(b"fake-image"), "image/png")},
+    )
+    assert image.status_code == 200
+    created = client.post(
+        "/api/conversations",
+        json={
+            "mode": "direct",
+            "teacher_id": teacher_id,
+            "subject": "物理",
+            "content": "请看图片",
+            "image_ids": [image.json()["id"]],
+        },
+    )
+    assert created.status_code == 200
+
+    calls = {}
+
+    async def fake_upload(self, image_data, filename, mime_type):
+        calls["upload"] = (image_data, filename, mime_type)
+        return "img_feishu_test"
+
+    async def fake_send_post(self, receive_id, title, rows):
+        calls["post"] = (receive_id, title, rows)
+        return "om_rich_text_test"
+
+    monkeypatch.setattr(feishu.FeishuClient, "upload_image", fake_upload)
+    monkeypatch.setattr(feishu.FeishuClient, "send_post", fake_send_post)
+    sent = asyncio.run(
+        feishu.flush_queued_deliveries(
+            client.app.state.session_factory,
+            client.app.state.settings,
+        )
+    )
+
+    assert sent == 1
+    assert calls["upload"][1:] == ("question.png", "image/png")
+    assert calls["post"][0] == "ou_image_teacher"
+    assert any(row == [{"tag": "img", "image_key": "img_feishu_test"}] for row in calls["post"][2])
 
 
 def test_route_mode_resolves_class_subject_teacher_and_missing_route_errors(client: TestClient):
@@ -235,6 +348,11 @@ def test_feishu_reply_maps_back_to_conversation(client: TestClient):
         f"/api/admin/teachers/{teacher_id}",
         json={"enabled": True, "feishu_open_id": "ou_teacher"},
     )
+    route = client.post(
+        "/api/admin/routes",
+        json={"class_id": "高一1班", "subject": "物理", "teacher_id": teacher_id},
+    )
+    assert route.status_code == 200
 
     login(client, "student", "stu-001", "张三", class_id=["高一1班"])
     created = client.post(
