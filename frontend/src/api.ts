@@ -34,6 +34,7 @@ export const api = {
   messages: (id: number) => request<Message[]>(`${apiPath}/conversations/${id}/messages`),
   postMessage: (id: number, payload: unknown) => request<Message>(`${apiPath}/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify(payload) }),
   inbox: () => request<Conversation[]>(`${apiPath}/teacher/inbox`),
+  studentInbox: () => request<Conversation[]>(`${apiPath}/student/inbox`),
   uploadImage: async (file: File) => {
     const form = new FormData()
     form.append('file', file)

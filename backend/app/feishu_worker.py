@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import threading
 
@@ -10,7 +9,7 @@ from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from .config import Settings
 from .db import Base, build_sessionmaker
-from .feishu import extract_reply_event, flush_queued_deliveries
+from .feishu import FeishuClient, extract_reply_event, flush_queued_deliveries
 from .services import handle_feishu_reply
 
 
@@ -38,33 +37,48 @@ def start_long_connection(session_factory, settings: Settings) -> None:
         return
 
     def on_message_receive(event: P2ImMessageReceiveV1) -> None:
-        payload = extract_reply_event(event.__dict__)
+        payload = extract_reply_event(event)
         if payload is None:
-            event_data = getattr(event, "event", None)
-            sender = getattr(event_data, "sender", None)
-            message = getattr(event_data, "message", None)
-            sender_id = getattr(sender, "sender_id", None)
-            payload = {
-                "reply_to_message_id": getattr(message, "parent_id", None) or getattr(message, "root_id", None),
-                "sender_open_id": getattr(sender_id, "open_id", None),
-                "content": (getattr(message, "content", "") or "").strip(),
-            }
-            try:
-                payload["content"] = json.loads(payload["content"]).get("text", payload["content"])
-            except json.JSONDecodeError:
-                pass
-        if not payload.get("reply_to_message_id") or not payload.get("sender_open_id") or not payload.get("content"):
             logger.info("ignored Feishu message without reply mapping")
             return
-        with session_factory() as session:
-            handle_feishu_reply(
-                session,
-                payload["reply_to_message_id"],
-                payload["sender_open_id"],
-                payload["content"],
-            )
-            session.commit()
+        message_type = payload["message_type"].lower()
+        content = payload["content"]
+        image_data = None
+        image_mime_type = None
+        if message_type == "image":
+            image_key = payload["image_key"]
+            message_id = payload["message_id"]
+            if image_key and message_id:
+                try:
+                    image_data, image_mime_type = asyncio.run(
+                        FeishuClient(settings).download_message_resource(message_id, image_key)
+                    )
+                except Exception:
+                    logger.exception("failed to download Feishu image resource for %s", message_id)
+                    content = "飞书图片同步失败，请重新发送文字说明。"
+            else:
+                content = "飞书图片信息不完整，请重新发送文字说明。"
+        elif message_type != "text":
+            logger.info("ignored unsupported Feishu reply type %s", message_type or "unknown")
+            return
+        if not content and image_data is None:
+            logger.info("ignored empty Feishu reply to %s", payload["reply_to_message_id"])
+            return
+        try:
+            with session_factory() as session:
+                handle_feishu_reply(
+                    session,
+                    payload["reply_to_message_id"],
+                    payload["sender_open_id"],
+                    content,
+                    image_data=image_data,
+                    image_mime_type=image_mime_type,
+                    media_dir=settings.media_dir,
+                )
+                session.commit()
             logger.info("synced Feishu reply for %s", payload["reply_to_message_id"])
+        except Exception:
+            logger.exception("failed to sync Feishu reply for %s", payload["reply_to_message_id"])
 
     handler = (
         lark.EventDispatcherHandler.builder(

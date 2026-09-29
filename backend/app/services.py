@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import mimetypes
 import shutil
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
@@ -222,6 +224,7 @@ def add_message(session: Session, conversation: Conversation, sender: User, data
     session.add(message)
     session.flush()
     attach_images(session, message, data.image_ids, sender)
+    conversation.updated_at = datetime.utcnow()
     return message
 
 
@@ -326,12 +329,34 @@ def teacher_inbox(session: Session, teacher: User) -> list[ConversationOut]:
     return [conversation_out(session, item, teacher) for item in conversations]
 
 
+def student_inbox(session: Session, student: User) -> list[ConversationOut]:
+    conversations = (
+        session.scalars(
+            select(Conversation)
+            .options(
+                selectinload(Conversation.student),
+                selectinload(Conversation.teacher),
+                selectinload(Conversation.messages).selectinload(Message.sender),
+                selectinload(Conversation.messages).selectinload(Message.images),
+            )
+            .where(Conversation.student_id == student.id)
+            .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        )
+        .unique()
+        .all()
+    )
+    return [conversation_out(session, item, student) for item in conversations]
+
+
 def handle_feishu_reply(
     session: Session,
     reply_to_message_id: str,
     sender_open_id: str,
     content: str,
     image_ids: list[int] | None = None,
+    image_data: bytes | None = None,
+    image_mime_type: str | None = None,
+    media_dir: Path | None = None,
 ) -> Message:
     delivery = session.scalar(
         select(FeishuDelivery)
@@ -346,10 +371,44 @@ def handle_feishu_reply(
     profile = delivery.teacher.teacher_profile
     if profile is None or profile.feishu_open_id != sender_open_id:
         raise HTTPException(status_code=403, detail="飞书用户未绑定到该教师")
-    return add_message(
+    message = add_message(
         session,
         delivery.conversation,
         delivery.teacher,
         MessageCreate(content=content, image_ids=image_ids or []),
         source=MessageSource.feishu.value,
     )
+    if image_data is not None:
+        if media_dir is None:
+            raise ValueError("media directory is required to store a Feishu image")
+        mime_type = (image_mime_type or "image/jpeg").split(";", 1)[0].strip().lower()
+        if not mime_type.startswith("image/"):
+            if image_data.startswith(b"\x89PNG\r\n\x1a\n"):
+                mime_type = "image/png"
+            elif image_data.startswith(b"\xff\xd8\xff"):
+                mime_type = "image/jpeg"
+            elif image_data.startswith((b"GIF87a", b"GIF89a")):
+                mime_type = "image/gif"
+            elif len(image_data) >= 12 and image_data[:4] == b"RIFF" and image_data[8:12] == b"WEBP":
+                mime_type = "image/webp"
+        if not mime_type.startswith("image/"):
+            raise ValueError(f"Feishu image resource returned unexpected content type: {mime_type}")
+        suffix = mimetypes.guess_extension(mime_type, strict=False) or ".jpg"
+        if suffix == ".jpe":
+            suffix = ".jpg"
+        relative = Path(str(delivery.teacher_id)) / f"{uuid.uuid4().hex}{suffix}"
+        target = media_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(image_data)
+        session.add(
+            ImageAsset(
+                owner_id=delivery.teacher_id,
+                original_name=f"飞书图片{suffix}",
+                path=str(relative),
+                mime_type=mime_type,
+                size=len(image_data),
+                message_id=message.id,
+            )
+        )
+        session.flush()
+    return message

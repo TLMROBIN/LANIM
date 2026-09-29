@@ -4,6 +4,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from sqlalchemy import select
@@ -54,6 +55,36 @@ class FeishuClient:
             if body.get("code") != 0:
                 raise RuntimeError(f"Feishu send error: {body}")
             return body["data"]["message_id"]
+
+    async def download_message_resource(self, message_id: str, file_key: str, resource_type: str = "image") -> tuple[bytes, str]:
+        token = await self.tenant_access_token()
+        url = (
+            "https://open.feishu.cn/open-apis/im/v1/messages/"
+            f"{quote(message_id, safe='')}/resources/{quote(file_key, safe='')}"
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                params={"type": resource_type},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                try:
+                    error_body = response.json()
+                except ValueError:
+                    error_body = {}
+                code = error_body.get("code")
+                message = error_body.get("msg") or error_body.get("message")
+                details = []
+                if code is not None:
+                    details.append(f"code {code}")
+                if message:
+                    details.append(str(message))
+                suffix = f" ({'; '.join(details)})" if details else ""
+                raise RuntimeError(f"Feishu resource download returned HTTP {response.status_code}{suffix}") from exc
+            return response.content, response.headers.get("content-type", "image/jpeg")
 
     async def resolve_open_id_by_mobile(self, mobile: str) -> str:
         """Resolve one teacher's app-scoped open_id from a mobile number."""
@@ -128,18 +159,45 @@ async def flush_queued_deliveries(session_factory: sessionmaker[Session], settin
     return sent
 
 
-def extract_reply_event(event: dict[str, Any]) -> dict[str, str] | None:
-    message = event.get("event", {}).get("message") or event.get("message")
-    sender = event.get("event", {}).get("sender") or event.get("sender")
-    if not message or not sender:
+def _field(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _message_content(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {"text": value}
+        return parsed if isinstance(parsed, dict) else {"text": value}
+    return {}
+
+
+def extract_reply_event(event: Any) -> dict[str, Any] | None:
+    envelope = _field(event, "event") or event
+    message = _field(envelope, "message") or _field(event, "message")
+    sender = _field(envelope, "sender") or _field(event, "sender")
+    if message is None or sender is None:
         return None
-    parent_id = message.get("parent_id") or message.get("root_id")
-    sender_id = (sender.get("sender_id") or {}).get("open_id")
-    content = message.get("content") or "{}"
-    try:
-        text = json.loads(content).get("text", "")
-    except json.JSONDecodeError:
-        text = content
-    if not parent_id or not sender_id or not text:
+    sender_id = _field(sender, "sender_id")
+    parent_id = _field(message, "parent_id") or _field(message, "root_id")
+    sender_open_id = _field(sender_id, "open_id")
+    content = _message_content(_field(message, "content"))
+    text = content.get("text") or ""
+    image_key = content.get("image_key") or ""
+    message_type = _field(message, "message_type") or ("image" if image_key else "text" if text else "")
+    message_id = _field(message, "message_id") or ""
+    if not parent_id or not sender_open_id:
         return None
-    return {"reply_to_message_id": parent_id, "sender_open_id": sender_id, "content": text}
+    return {
+        "reply_to_message_id": str(parent_id),
+        "sender_open_id": str(sender_open_id),
+        "message_id": str(message_id),
+        "message_type": str(message_type),
+        "image_key": str(image_key),
+        "content": str(text),
+    }

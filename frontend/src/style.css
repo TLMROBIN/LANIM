@@ -272,6 +272,15 @@ textarea {
   width: 100%;
 }
 
+.conversation.selected {
+  background: #eef4ff;
+  border-color: #7b98e8;
+}
+
+.student-history-title {
+  margin-top: 28px;
+}
+
 .conversation span,
 .conversation small {
   color: #69758a;

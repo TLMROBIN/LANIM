@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from './api'
 import type { AdminUser, Conversation, Message, User } from './types'
 
@@ -32,6 +32,9 @@ const selectedTeacherId = ref<number | ''>('')
 const subject = ref('物理')
 const content = ref('')
 const selectedImage = ref<File | null>(null)
+let studentMessagePoller: number | null = null
+let studentMessagePollActive = false
+let socket: WebSocket | null = null
 
 const routeClasses = ref<string[]>([])
 const routeClassInput = ref('')
@@ -137,6 +140,12 @@ async function loadReferenceData() {
   if (!me.value) return
   teachers.value = await api.teachers().catch(() => [])
   if (isTeacher.value) conversations.value = await api.inbox()
+  if (isStudent.value) {
+    conversations.value = await api.studentInbox()
+    const savedId = Number(sessionStorage.getItem(`im:student-conversation:${me.value.id}`))
+    const preferredConversation = conversations.value.find((item) => item.id === savedId) || conversations.value[0]
+    if (preferredConversation) await refreshMessages(preferredConversation)
+  }
   if (isAdmin.value) {
     await loadAdminUsers()
     routes.value = await api.routes()
@@ -206,7 +215,30 @@ async function logout() {
 
 async function refreshMessages(conversation: Conversation) {
   selectedConversation.value = conversation
+  if (isStudent.value && me.value) sessionStorage.setItem(`im:student-conversation:${me.value.id}`, String(conversation.id))
   messages.value = await api.messages(conversation.id)
+}
+
+function messagePreview(message?: Message | null) {
+  if (!message) return ''
+  return message.content || (message.images.length ? '图片' : '')
+}
+
+async function pollStudentMessages() {
+  const conversation = selectedConversation.value
+  if (!isStudent.value || !conversation || document.hidden || studentMessagePollActive) return
+  studentMessagePollActive = true
+  try {
+    const latestMessages = await api.messages(conversation.id)
+    if (selectedConversation.value?.id !== conversation.id) return
+    messages.value = latestMessages
+    const summary = conversations.value.find((item) => item.id === conversation.id)
+    if (summary && latestMessages.length) summary.last_message = latestMessages[latestMessages.length - 1]
+  } catch {
+    // Keep the last loaded messages visible while the server is temporarily unavailable.
+  } finally {
+    studentMessagePollActive = false
+  }
 }
 
 async function uploadSelectedImage() {
@@ -228,6 +260,7 @@ async function studentSend() {
         : { mode: 'route', subject: subject.value, content: content.value, image_ids: imageIds }
     const conversation = await api.createConversation(payload)
     content.value = ''
+    conversations.value = [conversation, ...conversations.value.filter((item) => item.id !== conversation.id)]
     await refreshMessages(conversation)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
@@ -403,7 +436,7 @@ function toggleCurrentPageUsers() {
 
 function connectSocket() {
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-  const socket = new WebSocket(`${protocol}://${location.host}${basePath}/ws`)
+  socket = new WebSocket(`${protocol}://${location.host}${basePath}/ws`)
   socket.onmessage = async (event) => {
     const data = JSON.parse(event.data)
     if (data.event === 'conversation.updated' && isTeacher.value) conversations.value = await api.inbox()
@@ -418,7 +451,15 @@ function assetUrl(url: string) {
 onMounted(async () => {
   await loadMe()
   await loadReferenceData()
-  if (me.value) connectSocket()
+  if (me.value) {
+    connectSocket()
+    if (isStudent.value) studentMessagePoller = window.setInterval(() => void pollStudentMessages(), 3000)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (studentMessagePoller !== null) window.clearInterval(studentMessagePoller)
+  socket?.close()
 })
 </script>
 
@@ -472,11 +513,24 @@ onMounted(async () => {
         <textarea v-model="content" rows="6" placeholder="请描述你的问题"></textarea>
         <input type="file" accept="image/*" @change="selectedImage = ($event.target as HTMLInputElement).files?.[0] || null" />
         <button class="button primary" :disabled="sending" @click="studentSend">发送给教师</button>
+        <h2 class="student-history-title">我的会话</h2>
+        <p v-if="conversations.length === 0" class="muted">发送问题后，会话会保留在这里。</p>
+        <button
+          v-for="item in conversations"
+          :key="item.id"
+          class="conversation"
+          :class="{ selected: selectedConversation?.id === item.id }"
+          @click="refreshMessages(item)"
+        >
+          <strong>{{ item.teacher_name }}</strong>
+          <span>{{ item.subject || '未指定科目' }}</span>
+          <small>{{ messagePreview(item.last_message) }}</small>
+        </button>
       </div>
 
       <div class="card">
-        <h2>当前会话</h2>
-        <p v-if="!selectedConversation" class="muted">发送问题后，这里会显示教师回复。</p>
+        <h2>会话消息</h2>
+        <p v-if="!selectedConversation" class="muted">发送问题或从左侧选择历史会话。</p>
         <div v-for="message in messages" :key="message.id" class="message" :class="message.sender_role">
           <strong>{{ message.sender_name }}</strong>
           <p>{{ message.content }}</p>
@@ -492,7 +546,7 @@ onMounted(async () => {
         <button v-for="item in conversations" :key="item.id" class="conversation" @click="refreshMessages(item)">
           <strong>{{ item.student_name }}</strong>
           <span>{{ item.subject || '未指定科目' }} · 未读 {{ item.unread_count }}</span>
-          <small>{{ item.last_message?.content }}</small>
+          <small>{{ messagePreview(item.last_message) }}</small>
         </button>
       </div>
       <div class="card">

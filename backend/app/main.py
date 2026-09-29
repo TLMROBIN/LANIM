@@ -42,6 +42,7 @@ from .services import (
     handle_feishu_reply,
     image_out,
     message_out,
+    student_inbox,
     teacher_inbox,
     update_admin_user,
     upload_image,
@@ -245,6 +246,10 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
     @app.get("/api/teacher/inbox")
     def inbox(db: Session = Depends(db_session), teacher: User = Depends(require_role(Role.teacher))):
         return teacher_inbox(db, teacher)
+
+    @app.get("/api/student/inbox")
+    def student_conversations(db: Session = Depends(db_session), student: User = Depends(require_role(Role.student))):
+        return student_inbox(db, student)
 
     @app.get("/api/admin/users")
     def list_admin_users(
