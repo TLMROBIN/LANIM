@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from './api'
 import type { AdminUser, Conversation, Message, User } from './types'
 
@@ -10,6 +10,9 @@ const teachers = ref<User[]>([])
 const conversations = ref<Conversation[]>([])
 const messages = ref<Message[]>([])
 const selectedConversation = ref<Conversation | null>(null)
+const messageViewport = ref<HTMLElement | null>(null)
+const showStudentConversationList = ref(false)
+const studentComposerInput = ref<HTMLTextAreaElement | null>(null)
 const routes = ref<{ id: number; class_id: string; subject: string; teacher_id: number }[]>([])
 const feishuStatus = ref<{ worker: string; deliveries: unknown[] } | null>(null)
 const adminUsers = ref<AdminUser[]>([])
@@ -27,9 +30,7 @@ const userSaving = ref(false)
 const routeSaving = ref(false)
 const routeSavedNotice = ref('')
 
-const studentMode = ref<'direct' | 'route'>('direct')
 const selectedTeacherId = ref<number | ''>('')
-const subject = ref('物理')
 const content = ref('')
 const selectedImage = ref<File | null>(null)
 const uploadedImageId = ref<number | null>(null)
@@ -63,6 +64,13 @@ const loginUrl = `${basePath}/api/auth/oidc/login`
 const isStudent = computed(() => me.value?.role === 'student')
 const isTeacher = computed(() => me.value?.role === 'teacher')
 const isAdmin = computed(() => me.value?.role === 'admin')
+const canSendStudentMessage = computed(
+  () =>
+    !sending.value &&
+    Boolean(selectedConversation.value || selectedTeacherId.value) &&
+    Boolean(content.value.trim() || selectedImage.value)
+)
+const selectedTeacher = computed(() => teachers.value.find((teacher) => teacher.id === selectedTeacherId.value) || null)
 const canGoPreviousUserPage = computed(() => adminUserPage.value > 1)
 const canGoNextUserPage = computed(() => adminUserPage.value < adminUserPages.value)
 const adminTeachers = computed(() => teachers.value)
@@ -145,6 +153,7 @@ async function loadReferenceData() {
   if (isTeacher.value) conversations.value = await api.inbox()
   if (isStudent.value) {
     conversations.value = await api.studentInbox()
+    selectedTeacherId.value = mostRecentAvailableTeacherId()
     const savedId = Number(sessionStorage.getItem(`im:student-conversation:${me.value.id}`))
     const preferredConversation = conversations.value.find((item) => item.id === savedId) || conversations.value[0]
     if (preferredConversation) await refreshMessages(preferredConversation)
@@ -155,6 +164,11 @@ async function loadReferenceData() {
     adminUserOptions.value = await api.adminUserOptions()
     feishuStatus.value = await api.feishuStatus()
   }
+}
+
+function mostRecentAvailableTeacherId(): number | '' {
+  const conversation = conversations.value.find((item) => teachers.value.some((teacher) => teacher.id === item.teacher_id))
+  return conversation?.teacher_id ?? ''
 }
 
 async function loadAdminUsers() {
@@ -230,9 +244,37 @@ async function logout() {
 }
 
 async function refreshMessages(conversation: Conversation) {
+  if (selectedConversation.value?.id !== conversation.id) {
+    content.value = ''
+    clearSelectedImage()
+    if (studentComposerInput.value) studentComposerInput.value.style.height = ''
+  }
   selectedConversation.value = conversation
+  selectedTeacherId.value = conversation.teacher_id
+  showStudentConversationList.value = false
   if (isStudent.value && me.value) sessionStorage.setItem(`im:student-conversation:${me.value.id}`, String(conversation.id))
   messages.value = await api.messages(conversation.id)
+  await scrollMessagesToLatest()
+}
+
+function isMessageViewportNearLatest() {
+  const viewport = messageViewport.value
+  return !viewport || viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < 96
+}
+
+async function scrollMessagesToLatest() {
+  await nextTick()
+  if (messageViewport.value) messageViewport.value.scrollTop = messageViewport.value.scrollHeight
+}
+
+function formatChatTime(value?: string | null) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  return date.toDateString() === now.toDateString()
+    ? date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
 }
 
 function messagePreview(message?: Message | null) {
@@ -245,11 +287,20 @@ async function pollStudentMessages() {
   if (!isStudent.value || !conversation || document.hidden || studentMessagePollActive) return
   studentMessagePollActive = true
   try {
+    const shouldFollowLatest = isMessageViewportNearLatest()
     const latestMessages = await api.messages(conversation.id)
     if (selectedConversation.value?.id !== conversation.id) return
     messages.value = latestMessages
     const summary = conversations.value.find((item) => item.id === conversation.id)
-    if (summary && latestMessages.length) summary.last_message = latestMessages[latestMessages.length - 1]
+    const latestMessage = latestMessages[latestMessages.length - 1]
+    if (summary && latestMessage) {
+      const hasNewLatestMessage = summary.last_message?.id !== latestMessage.id
+      summary.last_message = latestMessage
+      if (hasNewLatestMessage) {
+        conversations.value = [summary, ...conversations.value.filter((item) => item.id !== summary.id)]
+      }
+    }
+    if (shouldFollowLatest) await scrollMessagesToLatest()
   } catch {
     // Keep the last loaded messages visible while the server is temporarily unavailable.
   } finally {
@@ -280,12 +331,17 @@ function onImageSelected(event: Event) {
 function startNewStudentConversation() {
   selectedConversation.value = null
   messages.value = []
+  selectedTeacherId.value = mostRecentAvailableTeacherId()
+  showStudentConversationList.value = false
+  content.value = ''
+  clearSelectedImage()
+  if (studentComposerInput.value) studentComposerInput.value.style.height = ''
   error.value = ''
   if (me.value) sessionStorage.removeItem(`im:student-conversation:${me.value.id}`)
 }
 
 async function studentSend() {
-  if (!content.value.trim() && !selectedImage.value) return
+  if (!canSendStudentMessage.value) return
   error.value = ''
   sending.value = true
   try {
@@ -296,14 +352,17 @@ async function studentSend() {
       const sentMessage = await api.postMessage(conversation.id, { content: content.value, image_ids: imageIds })
       conversation.last_message = sentMessage
     } else {
-      const payload =
-        studentMode.value === 'direct'
-          ? { mode: 'direct', teacher_id: selectedTeacherId.value, subject: subject.value, content: content.value, image_ids: imageIds }
-          : { mode: 'route', subject: subject.value, content: content.value, image_ids: imageIds }
-      conversation = await api.createConversation(payload)
+      if (!selectedTeacherId.value) return
+      conversation = await api.createConversation({
+        mode: 'direct',
+        teacher_id: selectedTeacherId.value,
+        content: content.value,
+        image_ids: imageIds
+      })
     }
     content.value = ''
     clearSelectedImage()
+    if (studentComposerInput.value) studentComposerInput.value.style.height = ''
     conversations.value = [conversation, ...conversations.value.filter((item) => item.id !== conversation.id)]
     await refreshMessages(conversation)
   } catch (err) {
@@ -311,6 +370,18 @@ async function studentSend() {
   } finally {
     sending.value = false
   }
+}
+
+function resizeStudentComposer(event: Event) {
+  const textarea = event.target as HTMLTextAreaElement
+  textarea.style.height = 'auto'
+  textarea.style.height = `${Math.min(textarea.scrollHeight, 128)}px`
+}
+
+function onStudentComposerKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.shiftKey) return
+  event.preventDefault()
+  if (canSendStudentMessage.value) void studentSend()
 }
 
 async function teacherReply() {
@@ -509,10 +580,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="shell">
+  <main class="shell" :class="{ 'student-shell': isStudent }">
     <header class="topbar">
       <div>
-        <p class="eyebrow">School IM</p>
+        <p v-if="!isStudent" class="eyebrow">School IM</p>
         <h1>校园即时通讯</h1>
       </div>
       <a v-if="!me" class="button primary" :href="loginUrl">通过统一认证登录</a>
@@ -539,56 +610,148 @@ onBeforeUnmount(() => {
       </a>
     </section>
 
-    <section v-if="isStudent" class="grid">
-      <div class="card">
-        <h2>{{ selectedConversation ? '继续会话' : '发起提问' }}</h2>
-        <div v-if="selectedConversation" class="active-conversation">
-          <p>当前会话：{{ selectedConversation.teacher_name }} · {{ selectedConversation.subject || '未指定科目' }}</p>
-          <button class="button" @click="startNewStudentConversation">新建会话</button>
+    <section
+      v-if="isStudent"
+      class="student-chat-layout"
+      :class="{ 'show-list': showStudentConversationList }"
+    >
+      <aside class="student-sidebar" aria-label="会话列表">
+        <div class="student-sidebar-header">
+          <div>
+            <h2>会话</h2>
+            <p>{{ me?.display_name }}<span v-if="me?.class_id"> · {{ me.class_id }}</span></p>
+          </div>
+          <button class="student-new-chat" type="button" @click="startNewStudentConversation">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            <span>新建对话</span>
+          </button>
         </div>
-        <template v-else>
-          <label>路由方式</label>
-          <select v-model="studentMode">
-            <option value="direct">直接选择教师</option>
-            <option value="route">按班级与科目自动分配</option>
-          </select>
-          <label v-if="studentMode === 'direct'">教师（仅显示关联本班的教师）</label>
-          <select v-if="studentMode === 'direct'" v-model="selectedTeacherId">
-            <option disabled value="">请选择教师</option>
-            <option v-for="teacher in teachers" :key="teacher.id" :value="teacher.id">{{ teacher.display_name }}</option>
-          </select>
-          <p v-if="studentMode === 'direct' && teachers.length === 0" class="muted">当前班级尚未关联可联系的教师。</p>
-          <label>科目</label>
-          <input v-model="subject" placeholder="物理" />
-        </template>
-        <label>问题</label>
-        <textarea v-model="content" rows="6" placeholder="请描述你的问题"></textarea>
-        <input ref="studentImageInput" type="file" accept="image/*" @change="onImageSelected" />
-        <button class="button primary" :disabled="sending" @click="studentSend">{{ selectedConversation ? '发送消息' : '发送给教师' }}</button>
-        <h2 class="student-history-title">我的会话</h2>
-        <p v-if="conversations.length === 0" class="muted">发送问题后，会话会保留在这里。</p>
-        <button
-          v-for="item in conversations"
-          :key="item.id"
-          class="conversation"
-          :class="{ selected: selectedConversation?.id === item.id }"
-          @click="refreshMessages(item)"
-        >
-          <strong>{{ item.teacher_name }}</strong>
-          <span>{{ item.subject || '未指定科目' }}</span>
-          <small>{{ messagePreview(item.last_message) }}</small>
-        </button>
-      </div>
+        <div class="student-conversation-list">
+          <p v-if="conversations.length === 0" class="student-list-empty">发起对话后，会显示在这里。</p>
+          <button
+            v-for="item in conversations"
+            :key="item.id"
+            class="student-conversation"
+            :class="{ selected: selectedConversation?.id === item.id }"
+            type="button"
+            @click="refreshMessages(item)"
+          >
+            <span class="student-conversation-avatar">{{ item.teacher_name.slice(0, 1) }}</span>
+            <span class="student-conversation-copy">
+              <span class="student-conversation-topline">
+                <strong>{{ item.teacher_name }}</strong>
+                <time>{{ formatChatTime(item.last_message?.created_at) }}</time>
+              </span>
+              <small>{{ messagePreview(item.last_message) || '开始聊天' }}</small>
+            </span>
+          </button>
+        </div>
+      </aside>
 
-      <div class="card">
-        <h2>会话消息</h2>
-        <p v-if="!selectedConversation" class="muted">发送问题或从左侧选择历史会话。</p>
-        <div v-for="message in messages" :key="message.id" class="message" :class="message.sender_role">
-          <strong>{{ message.sender_name }}</strong>
-          <p>{{ message.content }}</p>
-          <img v-for="image in message.images" :key="image.id" :src="assetUrl(image.url)" :alt="image.original_name" />
+      <section class="student-chat-main" aria-label="聊天窗口">
+        <header class="student-chat-header">
+          <button
+            class="student-mobile-back"
+            type="button"
+            aria-label="返回会话列表"
+            @click="showStudentConversationList = true"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+          </button>
+          <template v-if="selectedConversation">
+            <span class="student-header-avatar">{{ selectedConversation.teacher_name.slice(0, 1) }}</span>
+            <div class="student-chat-heading">
+              <strong>{{ selectedConversation.teacher_name }}</strong>
+              <span>与老师的对话</span>
+            </div>
+          </template>
+          <div v-else class="student-new-heading">
+            <label for="student-teacher-select">选择老师</label>
+            <select id="student-teacher-select" v-model="selectedTeacherId" :disabled="teachers.length === 0">
+              <option disabled value="">请选择老师</option>
+              <option v-for="teacher in teachers" :key="teacher.id" :value="teacher.id">
+                {{ teacher.display_name }}
+              </option>
+            </select>
+          </div>
+          <p v-if="!selectedConversation && teachers.length === 0" class="student-no-teachers">
+            当前班级还没有关联可联系的老师。
+          </p>
+        </header>
+
+        <div ref="messageViewport" class="student-message-history" aria-live="polite">
+          <div v-if="!selectedConversation" class="student-empty-state">
+            <h3>{{ selectedTeacher ? `与${selectedTeacher.display_name}开始聊天` : '选择一位老师开始聊天' }}</h3>
+            <p>发送第一条消息后，这里会保留你和老师的对话。</p>
+          </div>
+          <div v-else-if="messages.length === 0" class="student-empty-state">
+            <h3>还没有消息</h3>
+            <p>在下方输入问题，老师会在这里回复你。</p>
+          </div>
+          <div
+            v-for="message in messages"
+            :key="message.id"
+            class="student-message-item"
+            :class="message.sender_role"
+          >
+            <div class="student-message-meta">
+              <strong>{{ message.sender_name }}</strong>
+              <time>{{ formatChatTime(message.created_at) }}</time>
+            </div>
+            <div class="student-message-bubble">
+              <p v-if="message.content">{{ message.content }}</p>
+              <img
+                v-for="image in message.images"
+                :key="image.id"
+                :src="assetUrl(image.url)"
+                :alt="image.original_name"
+              />
+            </div>
+          </div>
         </div>
-      </div>
+
+        <footer class="student-composer">
+          <div v-if="selectedImage" class="student-attachment-chip">
+            <span>{{ selectedImage.name }}</span>
+            <button type="button" @click="clearSelectedImage">移除</button>
+          </div>
+          <div class="student-composer-row">
+            <label
+              class="student-attach-button"
+              :class="{ disabled: !selectedConversation && !selectedTeacherId }"
+              aria-label="添加图片"
+              title="添加图片"
+            >
+              <input
+                ref="studentImageInput"
+                class="visually-hidden"
+                type="file"
+                accept="image/*"
+                aria-label="选择图片"
+                :disabled="!selectedConversation && !selectedTeacherId"
+                @change="onImageSelected"
+              />
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20.5 11.5 12 20a5 5 0 0 1-7.1-7.1l8.6-8.6a3.5 3.5 0 0 1 5 5L9.6 16.2a2 2 0 0 1-2.8-2.8l7.8-7.8" />
+              </svg>
+            </label>
+            <textarea
+              ref="studentComposerInput"
+              v-model="content"
+              rows="1"
+              aria-label="消息内容"
+              placeholder="输入消息…"
+              :disabled="!selectedConversation && !selectedTeacherId"
+              @input="resizeStudentComposer"
+              @keydown="onStudentComposerKeydown"
+            ></textarea>
+            <button class="student-send-button" type="button" :disabled="!canSendStudentMessage" @click="studentSend">
+              {{ sending ? '发送中…' : '发送' }}
+            </button>
+          </div>
+          <p class="student-composer-hint">Enter 发送 · Shift + Enter 换行</p>
+        </footer>
+      </section>
     </section>
 
     <section v-if="isTeacher" class="grid">
