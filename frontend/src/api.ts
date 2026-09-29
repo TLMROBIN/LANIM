@@ -27,7 +27,7 @@ function queryString(params: Record<string, string | number | undefined>) {
 
 export const api = {
   me: () => request<User>(`${apiPath}/me`),
-  logout: () => request<{ ok: boolean }>(`${apiPath}/auth/logout`, { method: 'POST' }),
+  logout: () => request<{ ok: boolean; id_token_hint?: string }>(`${apiPath}/auth/logout`, { method: 'POST' }),
   teachers: () => request<User[]>(`${apiPath}/teachers`),
   subjects: (classId: string) => request<{ subject: string; teacher_id: number }[]>(`${apiPath}/subjects?class_id=${encodeURIComponent(classId)}`),
   createConversation: (payload: unknown) => request<Conversation>(`${apiPath}/conversations`, { method: 'POST', body: JSON.stringify(payload) }),

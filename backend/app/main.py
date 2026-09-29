@@ -154,20 +154,23 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
             )
             if token_response.status_code >= 400:
                 raise HTTPException(status_code=400, detail="OIDC token exchange failed")
-            access_token = token_response.json().get("access_token")
+            token_payload = token_response.json()
+            access_token = token_payload.get("access_token")
             userinfo_response = await client.get(userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
             if userinfo_response.status_code >= 400:
                 raise HTTPException(status_code=400, detail="OIDC userinfo failed")
         user = upsert_user_from_claims(db, userinfo_response.json())
         db.commit()
         request.session["user_id"] = user.id
+        request.session["id_token_hint"] = token_payload.get("id_token")
         request.session.pop("oidc_state", None)
         return RedirectResponse(url="/im/")
 
     @app.post("/api/auth/logout")
     def logout(request: Request):
+        id_token_hint = request.session.get("id_token_hint")
         request.session.clear()
-        return {"ok": True}
+        return {"ok": True, "id_token_hint": id_token_hint}
 
     @app.get("/api/me", response_model=UserOut)
     def me(user: User = Depends(current_user)):

@@ -204,17 +204,26 @@ function clearSessionState() {
 
 async function logout() {
   error.value = ''
+  let idTokenHint = ''
   try {
-    await api.logout()
-    clearSessionState()
+    const result = await api.logout()
+    idTokenHint = result.id_token_hint || ''
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
-    return
+  } finally {
+    clearSessionState()
   }
-  window.location.href =
-    'http://192.168.1.206/auth/realms/school-platform/protocol/openid-connect/logout' +
-    '?client_id=im&post_logout_redirect_uri=' +
-    encodeURIComponent('http://192.168.1.206/im/')
+  const origin = window.location.origin
+  const logoutUrl = new URL('/auth/realms/school-platform/protocol/openid-connect/logout', origin)
+  logoutUrl.searchParams.set('client_id', 'im')
+  if (idTokenHint) {
+    logoutUrl.searchParams.set('id_token_hint', idTokenHint)
+  }
+  logoutUrl.searchParams.set(
+    'post_logout_redirect_uri',
+    new URL('/directory-admin/api/auth/login', origin).toString()
+  )
+  window.location.href = logoutUrl.toString()
 }
 
 async function refreshMessages(conversation: Conversation) {
