@@ -49,8 +49,19 @@ def upsert_user_from_claims(session: Session, claims: dict[str, Any]) -> User:
     user.username = username
     user.display_name = display_name
     user.role = role
-    user.class_id = first_attr(attributes, "class_id") or first_attr(attributes, "class") or first_attr(attributes, "grade")
-    user.grade = first_attr(attributes, "grade")
+    claimed_class_id = (
+        first_attr(attributes, "class_id")
+        or first_attr(attributes, "class")
+        or first_attr(attributes, "grade")
+    )
+    claimed_grade = first_attr(attributes, "grade")
+    # Directory sync may populate these fields even when the OIDC client does
+    # not request the corresponding Keycloak attributes. Keep those values
+    # unless a non-empty claim is actually provided.
+    if claimed_class_id:
+        user.class_id = claimed_class_id
+    if claimed_grade:
+        user.grade = claimed_grade
     if role == Role.teacher.value and user.teacher_profile is None:
         session.add(TeacherProfile(user_id=user.id, enabled=True))
         session.flush()
