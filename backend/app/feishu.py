@@ -233,6 +233,51 @@ def _message_content(value: Any) -> dict[str, Any]:
     return {}
 
 
+def _post_content_parts(content: dict[str, Any]) -> tuple[str, list[str]]:
+    post = content.get("post", content)
+    if isinstance(post, dict) and not isinstance(post.get("content"), list):
+        post = next(
+            (value for value in post.values() if isinstance(value, dict) and isinstance(value.get("content"), list)),
+            post,
+        )
+    if not isinstance(post, dict):
+        return "", []
+    text_parts: list[str] = []
+    image_keys: list[str] = []
+    title = post.get("title")
+    if title:
+        text_parts.append(str(title))
+
+    def visit(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+        tag = value.get("tag")
+        if tag == "img":
+            image_key = value.get("image_key")
+            if image_key:
+                image_keys.append(str(image_key))
+            return
+        if tag == "text":
+            text = value.get("text")
+            if text:
+                text_parts.append(str(text))
+            return
+        if tag in {"a", "at"}:
+            text = value.get("text") or value.get("user_name")
+            if text:
+                text_parts.append(str(text))
+            return
+        for item in value.values():
+            visit(item)
+
+    visit(post.get("content", []))
+    return "\n".join(part for part in text_parts if part), image_keys
+
+
 def extract_reply_event(event: Any) -> dict[str, Any] | None:
     envelope = _field(event, "event") or event
     message = _field(envelope, "message") or _field(event, "message")
@@ -244,8 +289,13 @@ def extract_reply_event(event: Any) -> dict[str, Any] | None:
     sender_open_id = _field(sender_id, "open_id")
     content = _message_content(_field(message, "content"))
     text = content.get("text") or ""
-    image_key = content.get("image_key") or ""
-    message_type = _field(message, "message_type") or ("image" if image_key else "text" if text else "")
+    image_keys = [str(content["image_key"])] if content.get("image_key") else []
+    message_type = _field(message, "message_type") or ("image" if image_keys else "text" if text else "")
+    if str(message_type).lower() == "post":
+        text, post_image_keys = _post_content_parts(content)
+        image_keys.extend(post_image_keys)
+    image_keys = list(dict.fromkeys(image_keys))
+    image_key = image_keys[0] if image_keys else ""
     message_id = _field(message, "message_id") or ""
     if not parent_id or not sender_open_id:
         return None
@@ -255,5 +305,6 @@ def extract_reply_event(event: Any) -> dict[str, Any] | None:
         "message_id": str(message_id),
         "message_type": str(message_type),
         "image_key": str(image_key),
+        "image_keys": image_keys,
         "content": str(text),
     }

@@ -384,6 +384,7 @@ def handle_feishu_reply(
     image_ids: list[int] | None = None,
     image_data: bytes | None = None,
     image_mime_type: str | None = None,
+    image_attachments: list[tuple[bytes, str | None]] | None = None,
     media_dir: Path | None = None,
 ) -> Message:
     delivery = session.scalar(
@@ -406,37 +407,41 @@ def handle_feishu_reply(
         MessageCreate(content=content, image_ids=image_ids or []),
         source=MessageSource.feishu.value,
     )
+    attachments = list(image_attachments or [])
     if image_data is not None:
+        attachments.insert(0, (image_data, image_mime_type))
+    if attachments:
         if media_dir is None:
             raise ValueError("media directory is required to store a Feishu image")
-        mime_type = (image_mime_type or "image/jpeg").split(";", 1)[0].strip().lower()
-        if not mime_type.startswith("image/"):
-            if image_data.startswith(b"\x89PNG\r\n\x1a\n"):
-                mime_type = "image/png"
-            elif image_data.startswith(b"\xff\xd8\xff"):
-                mime_type = "image/jpeg"
-            elif image_data.startswith((b"GIF87a", b"GIF89a")):
-                mime_type = "image/gif"
-            elif len(image_data) >= 12 and image_data[:4] == b"RIFF" and image_data[8:12] == b"WEBP":
-                mime_type = "image/webp"
-        if not mime_type.startswith("image/"):
-            raise ValueError(f"Feishu image resource returned unexpected content type: {mime_type}")
-        suffix = mimetypes.guess_extension(mime_type, strict=False) or ".jpg"
-        if suffix == ".jpe":
-            suffix = ".jpg"
-        relative = Path(str(delivery.teacher_id)) / f"{uuid.uuid4().hex}{suffix}"
-        target = media_dir / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(image_data)
-        session.add(
-            ImageAsset(
-                owner_id=delivery.teacher_id,
-                original_name=f"飞书图片{suffix}",
-                path=str(relative),
-                mime_type=mime_type,
-                size=len(image_data),
-                message_id=message.id,
+        for attachment_data, attachment_mime_type in attachments:
+            mime_type = (attachment_mime_type or "image/jpeg").split(";", 1)[0].strip().lower()
+            if not mime_type.startswith("image/"):
+                if attachment_data.startswith(b"\x89PNG\r\n\x1a\n"):
+                    mime_type = "image/png"
+                elif attachment_data.startswith(b"\xff\xd8\xff"):
+                    mime_type = "image/jpeg"
+                elif attachment_data.startswith((b"GIF87a", b"GIF89a")):
+                    mime_type = "image/gif"
+                elif len(attachment_data) >= 12 and attachment_data[:4] == "RIFF" and attachment_data[8:12] == "WEBP":
+                    mime_type = "image/webp"
+            if not mime_type.startswith("image/"):
+                raise ValueError(f"Feishu image resource returned unexpected content type: {mime_type}")
+            suffix = mimetypes.guess_extension(mime_type, strict=False) or ".jpg"
+            if suffix == ".jpe":
+                suffix = ".jpg"
+            relative = Path(str(delivery.teacher_id)) / f"{uuid.uuid4().hex}{suffix}"
+            target = media_dir / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(attachment_data)
+            session.add(
+                ImageAsset(
+                    owner_id=delivery.teacher_id,
+                    original_name=f"飞书图片{suffix}",
+                    path=str(relative),
+                    mime_type=mime_type,
+                    size=len(attachment_data),
+                    message_id=message.id,
+                )
             )
-        )
         session.flush()
     return message

@@ -33,25 +33,27 @@ def start_delivery_loop(session_factory, settings: Settings) -> None:
 def process_feishu_reply(payload, session_factory, settings: Settings) -> None:
     message_type = payload["message_type"].lower()
     content = payload["content"]
-    image_data = None
-    image_mime_type = None
-    if message_type == "image":
-        image_key = payload["image_key"]
+    image_attachments = []
+    if message_type in {"image", "post"}:
+        image_keys = payload.get("image_keys") or ([payload["image_key"]] if payload.get("image_key") else [])
         message_id = payload["message_id"]
-        if image_key and message_id:
-            try:
-                image_data, image_mime_type = asyncio.run(
-                    FeishuClient(settings).download_message_resource(message_id, image_key)
-                )
-            except Exception:
-                logger.exception("failed to download Feishu image resource for %s", message_id)
+        if image_keys and message_id:
+            for image_key in image_keys:
+                try:
+                    image_data, image_mime_type = asyncio.run(
+                        FeishuClient(settings).download_message_resource(message_id, image_key)
+                    )
+                    image_attachments.append((image_data, image_mime_type))
+                except Exception:
+                    logger.exception("failed to download Feishu image resource for %s", message_id)
+            if not image_attachments and not content:
                 content = "飞书图片同步失败，请重新发送文字说明。"
-        else:
+        elif image_keys or message_type == "image":
             content = "飞书图片信息不完整，请重新发送文字说明。"
     elif message_type != "text":
         logger.info("ignored unsupported Feishu reply type %s", message_type or "unknown")
         return
-    if not content and image_data is None:
+    if not content and not image_attachments:
         logger.info("ignored empty Feishu reply to %s", payload["reply_to_message_id"])
         return
     try:
@@ -61,8 +63,7 @@ def process_feishu_reply(payload, session_factory, settings: Settings) -> None:
                 payload["reply_to_message_id"],
                 payload["sender_open_id"],
                 content,
-                image_data=image_data,
-                image_mime_type=image_mime_type,
+                image_attachments=image_attachments,
                 media_dir=settings.media_dir,
             )
             session.commit()
