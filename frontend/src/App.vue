@@ -203,6 +203,9 @@ function clearSessionState() {
 }
 
 async function logout() {
+  if (!window.confirm('确定退出登录吗？')) {
+    return
+  }
   error.value = ''
   let idTokenHint = ''
   try {
