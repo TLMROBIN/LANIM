@@ -8,7 +8,7 @@ import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session, selectinload
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -269,6 +269,7 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         role: Optional[str] = None,
         class_id: Optional[str] = None,
         grade: Optional[str] = None,
+        search: Optional[str] = None,
         page: int = Query(1, ge=1),
         page_size: int = Query(20, ge=1, le=100),
         db: Session = Depends(db_session),
@@ -285,6 +286,24 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         if grade:
             stmt = stmt.where(User.grade == grade)
             count_stmt = count_stmt.where(User.grade == grade)
+        search_term = (search or "").strip()
+        if search_term:
+            escaped_search = search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            search_pattern = f"%{escaped_search}%"
+            search_filter = or_(
+                User.display_name.ilike(search_pattern, escape="\\"),
+                User.username.ilike(search_pattern, escape="\\"),
+                User.class_id.ilike(search_pattern, escape="\\"),
+                User.grade.ilike(search_pattern, escape="\\"),
+                User.teacher_profile.has(
+                    or_(
+                        TeacherProfile.feishu_open_id.ilike(search_pattern, escape="\\"),
+                        TeacherProfile.feishu_user_id.ilike(search_pattern, escape="\\"),
+                    )
+                ),
+            )
+            stmt = stmt.where(search_filter)
+            count_stmt = count_stmt.where(search_filter)
         total = db.scalar(count_stmt) or 0
         pages = max((total + page_size - 1) // page_size, 1)
         rows = db.scalars(stmt.offset((page - 1) * page_size).limit(page_size)).unique().all()

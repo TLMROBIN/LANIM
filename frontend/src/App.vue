@@ -17,7 +17,7 @@ const adminUserPage = ref(1)
 const adminUserPageSize = 20
 const adminUserTotal = ref(0)
 const adminUserPages = ref(1)
-const adminUserFilters = ref({ role: '', classId: '', grade: '' })
+const adminUserFilters = ref({ role: '', classId: '', grade: '', search: '' })
 const adminUserOptions = ref<{ classes: string[]; grades: string[] }>({ classes: [], grades: [] })
 const selectedAdminUserIds = ref<number[]>([])
 const error = ref('')
@@ -162,6 +162,7 @@ async function loadAdminUsers() {
     role: adminUserFilters.value.role,
     classId: adminUserFilters.value.classId,
     grade: adminUserFilters.value.grade,
+    search: adminUserFilters.value.search,
     page: adminUserPage.value,
     pageSize: adminUserPageSize
   })
@@ -720,6 +721,21 @@ onBeforeUnmount(() => {
               <option v-for="grade in adminUserOptions.grades" :key="grade" :value="grade">{{ grade }}</option>
             </select>
           </label>
+          <form class="user-search" role="search" @submit.prevent="applyAdminUserFilters">
+            <label>
+              <span>检索用户</span>
+              <input v-model="adminUserFilters.search" type="search" placeholder="姓名、用户名、班级或飞书 ID" />
+            </label>
+            <button class="button primary" type="submit">检索</button>
+            <button
+              v-if="adminUserFilters.search"
+              class="button"
+              type="button"
+              @click="adminUserFilters.search = ''; applyAdminUserFilters()"
+            >
+              清除
+            </button>
+          </form>
         </div>
         <div class="list-toolbar">
           <p class="muted">
@@ -752,7 +768,9 @@ onBeforeUnmount(() => {
               <button class="button danger" @click="deleteUser(user)">删除</button>
             </div>
           </div>
-          <p v-if="adminUsers.length === 0" class="muted">当前页没有用户。</p>
+          <p v-if="adminUsers.length === 0" class="muted">
+            {{ adminUserFilters.search ? '没有匹配的用户。' : '当前页没有用户。' }}
+          </p>
         </div>
       </div>
 

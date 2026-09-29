@@ -43,12 +43,13 @@ export const api = {
   routes: () => request<{ id: number; class_id: string; subject: string; teacher_id: number }[]>(`${apiPath}/admin/routes`),
   createRoute: (payload: unknown) => request(`${apiPath}/admin/routes`, { method: 'POST', body: JSON.stringify(payload) }),
   adminUserOptions: () => request<{ classes: string[]; grades: string[] }>(`${apiPath}/admin/user-options`),
-  adminUsers: (params: { role?: string; classId?: string; grade?: string; page?: number; pageSize?: number } = {}) =>
+  adminUsers: (params: { role?: string; classId?: string; grade?: string; search?: string; page?: number; pageSize?: number } = {}) =>
     request<Paginated<AdminUser>>(
       `${apiPath}/admin/users${queryString({
         role: params.role,
         class_id: params.classId,
         grade: params.grade,
+        search: params.search,
         page: params.page,
         page_size: params.pageSize
       })}`

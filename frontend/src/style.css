@@ -233,6 +233,22 @@ textarea {
   margin-bottom: 8px;
 }
 
+.user-search {
+  align-items: end;
+  display: flex;
+  gap: 10px;
+  grid-column: 1 / -1;
+}
+
+.user-search label {
+  flex: 1;
+  margin: 0;
+}
+
+.user-search .button {
+  margin-top: 0;
+}
+
 .list-toolbar .muted {
   margin: 0;
 }
