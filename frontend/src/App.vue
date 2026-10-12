@@ -33,6 +33,8 @@ const routeSavedNotice = ref('')
 const selectedTeacherId = ref<number | ''>('')
 const content = ref('')
 const selectedImage = ref<File | null>(null)
+const selectedImagePreview = ref('')
+const cameraInput = ref<HTMLInputElement | null>(null)
 const uploadedImageId = ref<number | null>(null)
 const studentImageInput = ref<HTMLInputElement | null>(null)
 const teacherImageInput = ref<HTMLInputElement | null>(null)
@@ -317,15 +319,21 @@ async function uploadSelectedImage() {
 }
 
 function clearSelectedImage() {
+  if (selectedImagePreview.value) URL.revokeObjectURL(selectedImagePreview.value)
+  selectedImagePreview.value = ''
   selectedImage.value = null
   uploadedImageId.value = null
+  if (cameraInput.value) cameraInput.value.value = ''
   if (studentImageInput.value) studentImageInput.value.value = ''
   if (teacherImageInput.value) teacherImageInput.value.value = ''
 }
 
 function onImageSelected(event: Event) {
-  selectedImage.value = (event.target as HTMLInputElement).files?.[0] || null
-  uploadedImageId.value = null
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (!file || sending.value) return
+  clearSelectedImage()
+  selectedImage.value = file
+  selectedImagePreview.value = URL.createObjectURL(file)
 }
 
 function startNewStudentConversation() {
@@ -385,12 +393,20 @@ function onStudentComposerKeydown(event: KeyboardEvent) {
 }
 
 async function teacherReply() {
-  if (!selectedConversation.value || (!content.value.trim() && !selectedImage.value)) return
-  const imageIds = await uploadSelectedImage()
-  await api.postMessage(selectedConversation.value.id, { content: content.value, image_ids: imageIds })
-  content.value = ''
-  clearSelectedImage()
-  await refreshMessages(selectedConversation.value)
+  if (sending.value || !selectedConversation.value || (!content.value.trim() && !selectedImage.value)) return
+  error.value = ''
+  sending.value = true
+  try {
+    const imageIds = await uploadSelectedImage()
+    await api.postMessage(selectedConversation.value.id, { content: content.value, image_ids: imageIds })
+    content.value = ''
+    clearSelectedImage()
+    await refreshMessages(selectedConversation.value)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    sending.value = false
+  }
 }
 
 async function createRoute() {
@@ -574,6 +590,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (selectedImagePreview.value) URL.revokeObjectURL(selectedImagePreview.value)
   if (studentMessagePoller !== null) window.clearInterval(studentMessagePoller)
   socket?.close()
 })
@@ -715,13 +732,18 @@ onBeforeUnmount(() => {
 
         <footer class="student-composer">
           <div v-if="selectedImage" class="student-attachment-chip">
+            <img :src="selectedImagePreview" alt="待发送图片预览" />
             <span>{{ selectedImage.name }}</span>
-            <button type="button" @click="clearSelectedImage">移除</button>
+            <button type="button" :disabled="sending" @click="clearSelectedImage">移除</button>
           </div>
           <div class="student-composer-row">
+            <input ref="cameraInput" class="visually-hidden" type="file" accept="image/*" capture="environment"
+              aria-label="拍照上传" :disabled="sending || (!selectedConversation && !selectedTeacherId)" @change="onImageSelected" />
+            <button class="student-camera-button" type="button" title="拍照上传" aria-label="拍照上传"
+              :disabled="sending || (!selectedConversation && !selectedTeacherId)" @click="cameraInput?.click()">拍照</button>
             <label
               class="student-attach-button"
-              :class="{ disabled: !selectedConversation && !selectedTeacherId }"
+              :class="{ disabled: sending || (!selectedConversation && !selectedTeacherId) }"
               aria-label="添加图片"
               title="添加图片"
             >
@@ -731,7 +753,7 @@ onBeforeUnmount(() => {
                 type="file"
                 accept="image/*"
                 aria-label="选择图片"
-                :disabled="!selectedConversation && !selectedTeacherId"
+                :disabled="sending || (!selectedConversation && !selectedTeacherId)"
                 @change="onImageSelected"
               />
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -744,7 +766,7 @@ onBeforeUnmount(() => {
               rows="1"
               aria-label="消息内容"
               placeholder="输入消息…"
-              :disabled="!selectedConversation && !selectedTeacherId"
+              :disabled="sending || (!selectedConversation && !selectedTeacherId)"
               @input="resizeStudentComposer"
               @keydown="onStudentComposerKeydown"
             ></textarea>
@@ -776,8 +798,16 @@ onBeforeUnmount(() => {
           <img v-for="image in message.images" :key="image.id" :src="assetUrl(image.url)" :alt="image.original_name" />
         </div>
         <textarea v-model="content" rows="4" placeholder="输入回复"></textarea>
-        <input ref="teacherImageInput" type="file" accept="image/*" @change="onImageSelected" />
-        <button class="button primary" @click="teacherReply">回复</button>
+        <div v-if="selectedImage" class="student-attachment-chip">
+          <img :src="selectedImagePreview" alt="待发送图片预览" />
+          <span>{{ selectedImage.name }}</span>
+          <button type="button" :disabled="sending" @click="clearSelectedImage">移除</button>
+        </div>
+        <input ref="cameraInput" class="visually-hidden" type="file" accept="image/*" capture="environment"
+          aria-label="拍照上传" :disabled="sending || !selectedConversation" @change="onImageSelected" />
+        <button class="button" type="button" :disabled="sending || !selectedConversation" @click="cameraInput?.click()">拍照</button>
+        <input ref="teacherImageInput" type="file" accept="image/*" :disabled="sending || !selectedConversation" @change="onImageSelected" />
+        <button class="button primary" :disabled="sending || !selectedConversation || (!content.trim() && !selectedImage)" @click="teacherReply">{{ sending ? '发送中…' : '回复' }}</button>
       </div>
     </section>
 

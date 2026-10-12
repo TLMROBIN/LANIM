@@ -4,8 +4,8 @@ FastAPI + Vue 实现的实名学生-教师即时通讯系统。学生通过学�
 
 ## 功能
 
-- 学生端：实名登录、直接选择教师、按班级/科目自动路由、文字和图片提问。
-- 教师端：个人收件箱、实时 WebSocket 更新、文字和图片回复。
+- 学生端：实名登录、直接选择教师、按班级/科目自动路由、文字、图片和拍照提问。
+- 教师端：个人收件箱、实时 WebSocket 更新、文字、图片和拍照回复。
 - 管理端：维护班级/科目/教师路由、查看飞书投递状态。
 - 认证：对接 Keycloak/OIDC，默认 issuer 为 `http://10.50.159.62/auth/realms/school-platform`。
 - 部署：PostgreSQL + 本机图片卷 + API + 飞书 worker + Nginx 前端。
@@ -93,3 +93,9 @@ python -m app.sync_keycloak_users \
 .venv/bin/python -m pytest backend/tests/test_core.py -q
 cd frontend && npm run build
 ```
+
+## 拍照发图
+
+学生和教师输入区的“拍照”按钮沿用 StudyAgent 的原生文件拍照方式（`accept="image/*"`、`capture="environment"`），在支持的手机和平板浏览器上优先打开后置相机；桌面或不支持该提示的浏览器可能显示文件选择器。原有相册/图片选择入口保留。
+
+拍照后可预览或移除图片，确认后点击发送；取消拍照会保留已选图片。发送失败时保留文字、图片及已上传的图片 ID，可重试。使用原生文件拍照，不需要网页通过 `getUserMedia` 请求摄像头，也适用于学校现有 HTTP 访问方式；是否调用相机仍取决于设备和浏览器支持。

@@ -623,3 +623,10 @@ textarea {
 
 .topbar { flex-wrap: wrap; gap: 8px 16px; }
 .student-shell .topbar { flex-basis: auto; min-height: 68px; }
+
+.student-camera-button { background: var(--chat-surface); border: 1px solid #cbd5e1; border-radius: 9px; color: #334764; cursor: pointer; flex: 0 0 52px; height: 44px; font: inherit; font-size: 14px; padding: 0; }
+.student-camera-button:hover:not(:disabled) { background: var(--chat-hover); }
+.student-camera-button:disabled, .student-attachment-chip button:disabled { cursor: not-allowed; opacity: .5; }
+.student-camera-button:focus-visible { outline: 3px solid #9db7ff; outline-offset: 2px; }
+.student-attachment-chip img { border-radius: 4px; flex: 0 0 auto; width: 64px; height: 64px; object-fit: contain; }
+.student-composer-row textarea { min-width: 0; }
