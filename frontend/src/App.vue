@@ -582,9 +582,12 @@ onBeforeUnmount(() => {
 <template>
   <main class="shell" :class="{ 'student-shell': isStudent }">
     <header class="topbar">
-      <div>
+      <div class="toolbox-heading">
+        <a class="toolbox-link" href="http://10.50.159.62/platform/" aria-label="于博的工具箱，返回功能选择目录页">于博的工具箱</a>
+        <div>
         <p v-if="!isStudent" class="eyebrow">School IM</p>
         <h1>校园即时通讯</h1>
+        </div>
       </div>
       <a v-if="!me" class="button primary" :href="loginUrl">通过统一认证登录</a>
       <div v-else class="session-actions">
