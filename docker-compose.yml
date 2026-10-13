@@ -63,7 +63,7 @@ services:
     environment:
       IM_DATABASE_URL: postgresql+psycopg://im:${POSTGRES_PASSWORD:-im-dev-password}@db:5432/im
       IM_MEDIA_DIR: /data/media
-      IM_ATTACHMENT_RETENTION_DAYS: ${IM_ATTACHMENT_RETENTION_DAYS:-90}
+      IM_ATTACHMENT_RETENTION_DAYS: ${IM_ATTACHMENT_RETENTION_DAYS:-30}
     volumes:
       - im-media:/data/media
 

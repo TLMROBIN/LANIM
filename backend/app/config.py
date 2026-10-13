@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     feishu_encrypt_key: Optional[str] = None
     feishu_verification_token: Optional[str] = None
     dev_auth_enabled: bool = False
-    attachment_retention_days: int = 90
+    attachment_retention_days: int = 30
 
     # Compose also uses a few unprefixed values in the root .env. Ignore
     # those when the application settings are loaded locally.

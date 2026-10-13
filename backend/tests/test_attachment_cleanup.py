@@ -57,7 +57,7 @@ def test_cleanup_keeps_recent_files_and_rejects_outside_paths(client, tmp_path):
     now = datetime.utcnow()
     with client.app.state.session_factory() as db:
         user = db.scalar(select(User))
-        for path, age in [(str(outside), 100), ('new.jpg', 1), ('boundary.jpg', 90), ('missing.jpg', 100)]:
+        for path, age in [(str(outside), 100), ('new.jpg', 1), ('boundary.jpg', 30), ('missing.jpg', 100)]:
             db.add(ImageAsset(owner_id=user.id, original_name='photo.jpg', path=path, size=4,
                               mime_type='image/jpeg', created_at=now-timedelta(days=age)))
         db.commit()
