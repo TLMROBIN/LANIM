@@ -58,6 +58,10 @@ def cleanup_attachments(session: Session, settings: Settings, *, now: datetime |
 
 
 def run_monthly(settings: Settings) -> None:
+    if settings.attachment_retention_days < 1:
+        raise ValueError("attachment_retention_days must be positive")
+    logger.info("Attachment cleanup enabled: retain %s days, monthly at 03:00 Asia/Shanghai",
+                settings.attachment_retention_days)
     settings.media_dir.mkdir(parents=True, exist_ok=True)
     factory = build_sessionmaker(settings.database_url)
     marker = settings.media_dir / ".attachment-cleanup-month"

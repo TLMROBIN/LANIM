@@ -76,12 +76,14 @@ compose build
 echo "[4/5] Start Docker Compose services"
 if ! compose up -d; then
   echo "Compose up failed. Recreating application containers and retrying once." >&2
-  compose rm -sf api feishu-worker web
+  compose rm -sf api feishu-worker attachment-cleanup web
   compose up -d
 fi
 
 echo "[5/5] Verify health"
 python3 scripts/configure_upload_gateway.py
+compose exec -T api python -c 'import json, urllib.request; result = json.load(urllib.request.urlopen("http://127.0.0.1:8000/health")); assert result["status"] == "ok", result'
+compose exec -T attachment-cleanup python -m app.attachment_cleanup --dry-run
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if fetch_health; then
     echo "Health check passed at ${HEALTH_URL}."
