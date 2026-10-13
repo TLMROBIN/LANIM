@@ -32,6 +32,7 @@ export interface ImageAsset {
   original_name: string
   mime_type: string
   size: number
+  expired: boolean
 }
 
 export interface Message {

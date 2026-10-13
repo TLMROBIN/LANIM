@@ -102,6 +102,7 @@ class ImageOut(BaseModel):
     original_name: str
     mime_type: str
     size: int
+    expired: bool = False
 
 
 class MessageOut(BaseModel):

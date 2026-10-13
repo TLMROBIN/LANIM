@@ -81,6 +81,7 @@ if ! compose up -d; then
 fi
 
 echo "[5/5] Verify health"
+python3 scripts/configure_upload_gateway.py
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if fetch_health; then
     echo "Health check passed at ${HEALTH_URL}."

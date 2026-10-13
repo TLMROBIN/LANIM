@@ -51,6 +51,22 @@ services:
     volumes:
       - im-media:/data/media
 
+  attachment-cleanup:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "app.attachment_cleanup", "--monthly"]
+    environment:
+      IM_DATABASE_URL: postgresql+psycopg://im:${POSTGRES_PASSWORD:-im-dev-password}@db:5432/im
+      IM_MEDIA_DIR: /data/media
+      IM_ATTACHMENT_RETENTION_DAYS: ${IM_ATTACHMENT_RETENTION_DAYS:-90}
+    volumes:
+      - im-media:/data/media
+
   web:
     build:
       context: .

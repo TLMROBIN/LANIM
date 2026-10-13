@@ -213,6 +213,8 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
             raise HTTPException(status_code=404, detail="图片不存在")
         if not can_access_image(db, user, asset):
             raise HTTPException(status_code=403, detail="无权访问该图片")
+        if not asset.path:
+            raise HTTPException(status_code=410, detail="附件已清理")
         path = settings.media_dir / asset.path
         if not path.exists():
             raise HTTPException(status_code=404, detail="图片文件不存在")

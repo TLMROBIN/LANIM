@@ -192,6 +192,8 @@ def attach_images(session: Session, message: Message, image_ids: list[int], owne
         asset = session.get(ImageAsset, image_id)
         if asset is None:
             raise HTTPException(status_code=404, detail=f"图片 {image_id} 不存在")
+        if not asset.path:
+            raise HTTPException(status_code=410, detail="附件已清理，请重新上传")
         if asset.owner_id != owner.id and owner.role != Role.teacher.value:
             raise HTTPException(status_code=403, detail="不能使用他人上传的图片")
         asset.message_id = message.id
@@ -279,6 +281,7 @@ def image_out(asset: ImageAsset) -> ImageOut:
         original_name=asset.original_name,
         mime_type=asset.mime_type,
         size=asset.size,
+        expired=not bool(asset.path),
     )
 
 

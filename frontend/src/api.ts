@@ -10,6 +10,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...options
   })
   if (!response.ok) {
+    if (response.status === 413) throw new Error('照片文件过大，请选择小于 50 MB 的图片')
     const body = await response.json().catch(() => ({ detail: response.statusText }))
     throw new Error(body.detail || response.statusText)
   }

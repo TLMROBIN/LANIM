@@ -99,3 +99,17 @@ cd frontend && npm run build
 学生和教师输入区的“拍照”按钮沿用 StudyAgent 的原生文件拍照方式（`accept="image/*"`、`capture="environment"`），在支持的手机和平板浏览器上优先打开后置相机；桌面或不支持该提示的浏览器可能显示文件选择器。原有相册/图片选择入口保留。
 
 拍照后可预览或移除图片，确认后点击发送；取消拍照会保留已选图片。发送失败时保留文字、图片及已上传的图片 ID，可重试。使用原生文件拍照，不需要网页通过 `getUserMedia` 请求摄像头，也适用于学校现有 HTTP 访问方式；是否调用相机仍取决于设备和浏览器支持。
+
+## 上传大小与附件保留
+
+IM 容器和学校网关的 IM API 上传请求上限均为 50 MiB（包含表单开销）。部署脚本会更新 `/etc/nginx/sites-enabled/school-platform.conf` 中的 `/im/api/` 限制并验证、重载 Nginx，首次修改保留备份；前端对 413 显示中文提示。
+
+`attachment-cleanup` 服务每月北京时间 1 日 03:00 后检查一次清理，停机后恢复会补跑。默认仅清理超过 90 天的图片文件，可在 `.env` 设置 `IM_ATTACHMENT_RETENTION_DAYS`。初次启用不会立即删除现有附件，从下个月开始运行。聊天文字和附件元信息保留，学生端和教师端显示“附件已清理”，访问已清理图片返回 410。近期消息使用的图片和仍在飞书投递队列中的图片会保留；不删除媒体目录以外的文件。
+
+可先预览候选文件数量及大小：
+
+```bash
+docker compose exec -T attachment-cleanup python -m app.attachment_cleanup --dry-run
+```
+
+清理统计写入服务日志，月度执行标记保存在媒体卷中，服务重启不会重复执行当月清理。

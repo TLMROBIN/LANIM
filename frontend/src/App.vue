@@ -720,12 +720,10 @@ onBeforeUnmount(() => {
             </div>
             <div class="student-message-bubble">
               <p v-if="message.content">{{ message.content }}</p>
-              <img
-                v-for="image in message.images"
-                :key="image.id"
-                :src="assetUrl(image.url)"
-                :alt="image.original_name"
-              />
+              <template v-for="image in message.images" :key="image.id">
+                <p v-if="image.expired" class="muted">附件已清理（{{ image.original_name }}）</p>
+                <img v-else :src="assetUrl(image.url)" :alt="image.original_name" />
+              </template>
             </div>
           </div>
         </div>
@@ -795,7 +793,10 @@ onBeforeUnmount(() => {
         <div v-for="message in messages" :key="message.id" class="message" :class="message.sender_role">
           <strong>{{ message.sender_name }} <small>{{ message.source }}</small></strong>
           <p>{{ message.content }}</p>
-          <img v-for="image in message.images" :key="image.id" :src="assetUrl(image.url)" :alt="image.original_name" />
+          <template v-for="image in message.images" :key="image.id">
+            <p v-if="image.expired" class="muted">附件已清理（{{ image.original_name }}）</p>
+            <img v-else :src="assetUrl(image.url)" :alt="image.original_name" />
+          </template>
         </div>
         <textarea v-model="content" rows="4" placeholder="输入回复"></textarea>
         <div v-if="selectedImage" class="student-attachment-chip">
