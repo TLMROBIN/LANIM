@@ -1,4 +1,5 @@
 import io
+import os
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -66,3 +67,23 @@ def test_cleanup_keeps_recent_files_and_rejects_outside_paths(client, tmp_path):
         assert outside.read_bytes() == b'keep'
         assert db.scalar(select(ImageAsset).where(ImageAsset.path == 'new.jpg'))
         assert db.scalar(select(ImageAsset).where(ImageAsset.path == 'boundary.jpg'))
+
+
+def test_cleanup_removes_only_old_orphans_in_owner_directories(client):
+    settings = client.app.state.settings
+    root = settings.media_dir
+    (root / '1').mkdir(parents=True)
+    old = root / '1' / 'old.jpg'
+    recent = root / '1' / 'new.jpg'
+    marker = root / '.attachment-cleanup-month'
+    for path in [old, recent, marker]:
+        path.write_bytes(b'keep')
+    now = datetime.utcnow()
+    old_time = (now - timedelta(days=31)).timestamp()
+    os.utime(old, (old_time, old_time))
+    with client.app.state.session_factory() as db:
+        assert cleanup_attachments(db, settings, now=now, dry_run=True)['files'] == 1
+        assert old.exists()
+        assert cleanup_attachments(db, settings, now=now)['files'] == 1
+    assert not old.exists()
+    assert recent.exists() and marker.exists()

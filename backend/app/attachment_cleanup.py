@@ -54,6 +54,25 @@ def cleanup_attachments(session: Session, settings: Settings, *, now: datetime |
         except OSError:
             logger.exception("Could not remove attachment %s", asset.id)
             result["skipped"] += 1
+    # Upload failures can leave a file without a database row. Only scan the
+    # numeric owner directories used by upload_image, and apply the same age rule.
+    referenced = set(session.scalars(select(ImageAsset.path).where(ImageAsset.path != "")))
+    for path in root.glob("*/*"):
+        if not path.parent.name.isdigit() or path.relative_to(root).as_posix() in referenced:
+            continue
+        if path.is_symlink() or root not in path.resolve().parents or not path.is_file():
+            continue
+        try:
+            stat = path.stat()
+            if datetime.utcfromtimestamp(stat.st_mtime) >= cutoff:
+                continue
+            if not dry_run:
+                path.unlink()
+            result["files"] += 1
+            result["bytes"] += stat.st_size
+        except OSError:
+            logger.exception("Could not remove orphan attachment %s", path.name)
+            result["skipped"] += 1
     return result
 
 
