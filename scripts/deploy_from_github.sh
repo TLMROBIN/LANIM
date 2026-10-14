@@ -82,7 +82,19 @@ fi
 
 echo "[5/5] Verify health"
 python3 scripts/configure_upload_gateway.py
-compose exec -T api python -c 'import json, urllib.request; result = json.load(urllib.request.urlopen("http://127.0.0.1:8000/health")); assert result["status"] == "ok", result'
+API_HEALTH_READY=0
+for _ in {1..30}; do
+  if compose exec -T api python -c 'import json, urllib.request; result = json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5)); assert result["status"] == "ok", result'; then
+    API_HEALTH_READY=1
+    break
+  fi
+  sleep 2
+done
+if [[ "${API_HEALTH_READY}" -ne 1 ]]; then
+  echo "API health check failed after waiting for startup." >&2
+  compose ps >&2 || true
+  exit 1
+fi
 compose exec -T attachment-cleanup python -m app.attachment_cleanup --dry-run
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   if fetch_health; then
