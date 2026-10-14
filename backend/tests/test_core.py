@@ -257,7 +257,8 @@ def test_student_can_message_only_teachers_assigned_to_their_class(client: TestC
     assert sum(item["conversation_id"] == conversation_id for item in deliveries) == 2
 
 
-def test_queued_feishu_delivery_embeds_student_image_in_rich_text(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize("subject", [None, "物理"])
+def test_queued_feishu_delivery_embeds_student_image_in_rich_text(client: TestClient, monkeypatch: pytest.MonkeyPatch, subject):
     login(client, "teacher", "tea-image-post", "图片教师")
     teacher_id = client.get("/api/me").json()["id"]
     login(client, "admin", "admin-image-post", "管理员")
@@ -281,7 +282,7 @@ def test_queued_feishu_delivery_embeds_student_image_in_rich_text(client: TestCl
         json={
             "mode": "direct",
             "teacher_id": teacher_id,
-            "subject": "物理",
+            "subject": subject,
             "content": "请看图片",
             "image_ids": [image.json()["id"]],
         },
@@ -310,6 +311,7 @@ def test_queued_feishu_delivery_embeds_student_image_in_rich_text(client: TestCl
     assert sent == 1
     assert calls["upload"][1:] == ("question.png", "image/png")
     assert calls["post"][0] == "ou_image_teacher"
+    assert calls["post"][1] == "学生提问 · 图片学生"
     assert any(row == [{"tag": "img", "image_key": "img_feishu_test"}] for row in calls["post"][2])
 
 

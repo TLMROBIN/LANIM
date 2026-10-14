@@ -197,7 +197,7 @@ async def flush_queued_deliveries(session_factory: sessionmaker[Session], settin
                     rows.append(
                         [{"tag": "text", "text": "请直接回复本条机器人消息，系统会同步给学生。"}]
                     )
-                    title = f"学生提问 · {conversation.subject or '未指定科目'}"
+                    title = f"学生提问 · {conversation.student.display_name}"
                     delivery.feishu_message_id = await client.send_post(
                         delivery.feishu_open_id, title, rows
                     )
