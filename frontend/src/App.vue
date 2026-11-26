@@ -28,6 +28,7 @@ const selectedAdminUserIds = ref<number[]>([])
 const error = ref('')
 const routeError = ref('')
 const sending = ref(false)
+const deletingConversationId = ref<number | null>(null)
 const userSaving = ref(false)
 const routeSaving = ref(false)
 const routeSavedNotice = ref('')
@@ -74,6 +75,7 @@ const isAdmin = computed(() => me.value?.role === 'admin')
 const canSendStudentMessage = computed(
   () =>
     !sending.value &&
+    deletingConversationId.value === null &&
     Boolean(selectedConversation.value || selectedTeacherId.value) &&
     Boolean(content.value.trim() || selectedImage.value)
 )
@@ -222,6 +224,7 @@ function clearSessionState() {
   adminUserPages.value = 1
   selectedAdminUserIds.value = []
   adminUserOptions.value = { classes: [], grades: [] }
+  deletingConversationId.value = null
 }
 
 async function logout() {
@@ -368,7 +371,7 @@ function clearSelectedImage() {
 
 function onImageSelected(event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0]
-  if (!file || sending.value) return
+  if (!file || sending.value || deletingConversationId.value !== null) return
   clearSelectedImage()
   selectedImage.value = file
   selectedImagePreview.value = URL.createObjectURL(file)
@@ -385,6 +388,46 @@ function startNewStudentConversation() {
   if (composerInput.value) composerInput.value.style.height = ''
   error.value = ''
   if (me.value) sessionStorage.removeItem(`im:student-conversation:${me.value.id}`)
+}
+
+async function deleteStudentConversation(conversation: Conversation) {
+  if (!isStudent.value || sending.value || deletingConversationId.value !== null) return
+  if (!window.confirm(`确定删除与${conversation.teacher_name}的这条对话吗？删除后将不再显示在你的会话列表中。`)) {
+    return
+  }
+  error.value = ''
+  deletingConversationId.value = conversation.id
+  const wasSelected = selectedConversation.value?.id === conversation.id
+  const wasShowingList = showConversationList.value
+  try {
+    await api.deleteConversation(conversation.id)
+    const remaining = conversations.value.filter((item) => item.id !== conversation.id)
+    conversations.value = remaining
+    if (me.value) {
+      const storageKey = `im:student-conversation:${me.value.id}`
+      if (Number(sessionStorage.getItem(storageKey)) === conversation.id) {
+        sessionStorage.removeItem(storageKey)
+      }
+    }
+    if (wasSelected) {
+      messageRequest++
+      selectedConversation.value = null
+      messages.value = []
+      content.value = ''
+      clearSelectedImage()
+      if (composerInput.value) composerInput.value.style.height = ''
+      if (remaining.length > 0) {
+        await refreshMessages(remaining[0])
+        if (wasShowingList) showConversationList.value = true
+      } else {
+        startNewStudentConversation()
+      }
+    }
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    deletingConversationId.value = null
+  }
 }
 
 async function studentSend() {
@@ -684,31 +727,47 @@ onBeforeUnmount(() => {
             <h2>会话</h2>
             <p>{{ me?.display_name }}<span v-if="me?.class_id"> · {{ me.class_id }}</span></p>
           </div>
-          <button class="student-new-chat" type="button" :disabled="sending" @click="startNewStudentConversation">
+          <button class="student-new-chat" type="button" :disabled="sending || deletingConversationId !== null" @click="startNewStudentConversation">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             <span>新建对话</span>
           </button>
         </div>
         <div class="student-conversation-list">
           <p v-if="conversations.length === 0" class="student-list-empty">发起对话后，会显示在这里。</p>
-          <button
+          <div
             v-for="item in conversations"
             :key="item.id"
-            class="student-conversation"
+            class="student-conversation-row"
             :class="{ selected: selectedConversation?.id === item.id }"
-            type="button"
-            :disabled="sending"
-            @click="refreshMessages(item)"
           >
-            <span class="student-conversation-avatar">{{ item.teacher_name.slice(0, 1) }}</span>
-            <span class="student-conversation-copy">
-              <span class="student-conversation-topline">
-                <strong>{{ item.teacher_name }}</strong>
-                <time>{{ formatChatTime(item.last_message?.created_at) }}</time>
+            <button
+              class="student-conversation"
+              type="button"
+              :disabled="sending || deletingConversationId !== null"
+              @click="refreshMessages(item)"
+            >
+              <span class="student-conversation-avatar">{{ item.teacher_name.slice(0, 1) }}</span>
+              <span class="student-conversation-copy">
+                <span class="student-conversation-topline">
+                  <strong>{{ item.teacher_name }}</strong>
+                  <time>{{ formatChatTime(item.last_message?.created_at) }}</time>
+                </span>
+                <small>{{ messagePreview(item.last_message) || '开始聊天' }}</small>
               </span>
-              <small>{{ messagePreview(item.last_message) || '开始聊天' }}</small>
-            </span>
-          </button>
+            </button>
+            <button
+              class="student-conversation-delete"
+              type="button"
+              :aria-label="`删除与${item.teacher_name}的对话`"
+              title="删除对话"
+              :disabled="sending || deletingConversationId !== null"
+              @click="deleteStudentConversation(item)"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6" />
+              </svg>
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -728,6 +787,14 @@ onBeforeUnmount(() => {
               <strong>{{ selectedConversation.teacher_name }}</strong>
               <span>与老师的对话</span>
             </div>
+            <button
+              class="student-delete-chat"
+              type="button"
+              :disabled="sending || deletingConversationId !== null"
+              @click="deleteStudentConversation(selectedConversation)"
+            >
+              {{ deletingConversationId === selectedConversation.id ? '删除中…' : '删除对话' }}
+            </button>
           </template>
           <div v-else class="student-new-heading">
             <label for="student-teacher-select">选择老师</label>
@@ -783,16 +850,16 @@ onBeforeUnmount(() => {
           <div v-if="selectedImage" class="student-attachment-chip">
             <img :src="selectedImagePreview" alt="待发送图片预览" />
             <span>{{ selectedImage.name }}</span>
-            <button type="button" :disabled="sending" @click="clearSelectedImage">移除</button>
+            <button type="button" :disabled="sending || deletingConversationId !== null" @click="clearSelectedImage">移除</button>
           </div>
           <div class="student-composer-row">
             <input ref="cameraInput" class="visually-hidden" type="file" accept="image/*" capture="environment"
-              aria-label="拍照上传" :disabled="sending || (!selectedConversation && !selectedTeacherId)" @change="onImageSelected" />
+              aria-label="拍照上传" :disabled="sending || deletingConversationId !== null || (!selectedConversation && !selectedTeacherId)" @change="onImageSelected" />
             <button class="student-camera-button" type="button" title="拍照上传" aria-label="拍照上传"
-              :disabled="sending || (!selectedConversation && !selectedTeacherId)" @click="cameraInput?.click()">拍照</button>
+              :disabled="sending || deletingConversationId !== null || (!selectedConversation && !selectedTeacherId)" @click="cameraInput?.click()">拍照</button>
             <label
               class="student-attach-button"
-              :class="{ disabled: sending || (!selectedConversation && !selectedTeacherId) }"
+              :class="{ disabled: sending || deletingConversationId !== null || (!selectedConversation && !selectedTeacherId) }"
               aria-label="添加图片"
               title="添加图片"
             >
@@ -802,7 +869,7 @@ onBeforeUnmount(() => {
                 type="file"
                 accept="image/*"
                 aria-label="选择图片"
-                :disabled="sending || (!selectedConversation && !selectedTeacherId)"
+                :disabled="sending || deletingConversationId !== null || (!selectedConversation && !selectedTeacherId)"
                 @change="onImageSelected"
               />
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -815,7 +882,7 @@ onBeforeUnmount(() => {
               rows="1"
               aria-label="消息内容"
               placeholder="输入消息…"
-              :disabled="sending || (!selectedConversation && !selectedTeacherId)"
+              :disabled="sending || deletingConversationId !== null || (!selectedConversation && !selectedTeacherId)"
               @input="resizeComposer"
               @keydown="onStudentComposerKeydown"
             ></textarea>

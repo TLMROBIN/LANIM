@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from .models import (
@@ -184,6 +184,8 @@ def can_access_image(session: Session, user: User, asset: ImageAsset) -> bool:
     conversation = session.get(Conversation, message.conversation_id)
     if conversation is None:
         return False
+    if user.id == conversation.student_id and conversation.student_deleted_at is not None:
+        return False
     return user.id in (conversation.student_id, conversation.teacher_id)
 
 
@@ -338,6 +340,8 @@ def get_conversation_for_user(session: Session, conversation_id: int, user: User
         raise HTTPException(status_code=404, detail="会话不存在")
     if user.role != Role.admin.value and user.id not in {conversation.student_id, conversation.teacher_id}:
         raise HTTPException(status_code=403, detail="不能访问该会话")
+    if user.role == Role.student.value and conversation.student_deleted_at is not None:
+        raise HTTPException(status_code=404, detail="会话不存在")
     return conversation
 
 
@@ -370,13 +374,36 @@ def student_inbox(session: Session, student: User) -> list[ConversationOut]:
                 selectinload(Conversation.messages).selectinload(Message.sender),
                 selectinload(Conversation.messages).selectinload(Message.images),
             )
-            .where(Conversation.student_id == student.id)
+            .where(
+                Conversation.student_id == student.id,
+                Conversation.student_deleted_at.is_(None),
+            )
             .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
         )
         .unique()
         .all()
     )
     return [conversation_out(session, item, student) for item in conversations]
+
+
+def delete_student_conversation(session: Session, conversation_id: int, student: User) -> None:
+    """Soft-delete a conversation from the student's view while preserving teacher and Feishu records."""
+    if student.role != Role.student.value:
+        raise HTTPException(status_code=403, detail="Only students can delete conversations")
+    conversation = session.get(Conversation, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    if conversation.student_id != student.id:
+        raise HTTPException(status_code=403, detail="不能删除他人的会话")
+    if conversation.student_deleted_at is not None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    # Preserve updated_at explicitly so Column(onupdate=...) does not bump teacher inbox order.
+    session.execute(
+        update(Conversation)
+        .where(Conversation.id == conversation.id)
+        .values(student_deleted_at=datetime.utcnow(), updated_at=Conversation.updated_at)
+    )
+    session.expire(conversation)
 
 
 def handle_feishu_reply(

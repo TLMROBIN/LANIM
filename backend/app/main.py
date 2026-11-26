@@ -14,7 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .auth import current_user, require_role, upsert_user_from_claims
 from .config import Settings
-from .db import Base, build_sessionmaker
+from .db import build_sessionmaker, ensure_schema
 from .feishu import FeishuClient
 from .models import Conversation, FeishuDelivery, ImageAsset, Message, Role, TeacherProfile, TeachingRoute, User
 from .realtime import ConnectionManager
@@ -38,6 +38,7 @@ from .services import (
     can_access_image,
     conversation_out,
     create_student_conversation,
+    delete_student_conversation,
     get_conversation_for_user,
     handle_feishu_reply,
     image_out,
@@ -61,7 +62,7 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
 
     session_factory = build_sessionmaker(settings.database_url)
     engine = session_factory.kw["bind"]
-    Base.metadata.create_all(engine)
+    ensure_schema(engine)
 
     app = FastAPI(title=settings.app_name)
     app.state.settings = settings
@@ -233,6 +234,16 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         await app.state.manager.send_to_user(out.teacher_id, "conversation.updated", out.model_dump(mode="json"))
         return out
 
+    @app.delete("/api/conversations/{conversation_id}")
+    def delete_conversation(
+        conversation_id: int,
+        db: Session = Depends(db_session),
+        student: User = Depends(require_role(Role.student)),
+    ):
+        delete_student_conversation(db, conversation_id, student)
+        db.commit()
+        return {"ok": True}
+
     @app.get("/api/conversations/{conversation_id}/messages")
     def list_messages(conversation_id: int, db: Session = Depends(db_session), user: User = Depends(current_user)):
         conversation = get_conversation_for_user(db, conversation_id, user)
@@ -258,7 +269,8 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
                 "conversation.updated",
                 updated.model_dump(mode="json"),
             )
-        await app.state.manager.send_to_user(peer_id, "message.created", out.model_dump(mode="json"))
+        if not (peer_id == conversation.student_id and conversation.student_deleted_at is not None):
+            await app.state.manager.send_to_user(peer_id, "message.created", out.model_dump(mode="json"))
         return out
 
     @app.get("/api/teacher/inbox")
@@ -514,7 +526,10 @@ def create_app(database_url: str | None = None, media_dir: Path | None = None, d
         )
         db.commit()
         out = message_out(message)
-        await app.state.manager.send_to_user(message.conversation.student_id, "message.created", out.model_dump(mode="json"))
+        if message.conversation.student_deleted_at is None:
+            await app.state.manager.send_to_user(
+                message.conversation.student_id, "message.created", out.model_dump(mode="json")
+            )
         return out
 
     @app.websocket("/ws")

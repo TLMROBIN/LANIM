@@ -88,6 +88,7 @@ class Conversation(Base):
     subject: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     mode: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(24), default=ConversationStatus.open.value)
+    student_deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

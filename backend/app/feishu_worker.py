@@ -9,7 +9,7 @@ import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 
 from .config import Settings
-from .db import Base, build_sessionmaker
+from .db import build_sessionmaker, ensure_schema
 from .feishu import FeishuClient, extract_reply_event, flush_queued_deliveries
 from .services import handle_feishu_reply
 
@@ -106,7 +106,7 @@ def start_long_connection(session_factory, settings: Settings) -> None:
 def main() -> None:
     settings = Settings()
     session_factory = build_sessionmaker(settings.database_url)
-    Base.metadata.create_all(session_factory.kw["bind"])
+    ensure_schema(session_factory.kw["bind"])
     logger.info("Feishu worker started")
     threading.Thread(target=start_delivery_loop, args=(session_factory, settings), daemon=True).start()
     start_long_connection(session_factory, settings)

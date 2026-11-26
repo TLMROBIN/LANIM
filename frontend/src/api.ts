@@ -32,6 +32,7 @@ export const api = {
   teachers: () => request<User[]>(`${apiPath}/teachers`),
   subjects: (classId: string) => request<{ subject: string; teacher_id: number }[]>(`${apiPath}/subjects?class_id=${encodeURIComponent(classId)}`),
   createConversation: (payload: unknown) => request<Conversation>(`${apiPath}/conversations`, { method: 'POST', body: JSON.stringify(payload) }),
+  deleteConversation: (id: number) => request<{ ok: boolean }>(`${apiPath}/conversations/${id}`, { method: 'DELETE' }),
   messages: (id: number) => request<Message[]>(`${apiPath}/conversations/${id}/messages`),
   postMessage: (id: number, payload: unknown) => request<Message>(`${apiPath}/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify(payload) }),
   inbox: () => request<Conversation[]>(`${apiPath}/teacher/inbox`),

@@ -1,13 +1,16 @@
-import io
 import asyncio
 import inspect
+import io
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import inspect as sa_inspect
 
 from app import feishu, feishu_worker
+from app.models import Conversation
 from app.sync_keycloak_users import keycloak_user_to_admin_user
 from app.main import create_app
 
@@ -558,3 +561,155 @@ def test_admin_users_can_be_filtered_by_class_and_grade(client: TestClient):
     options = client.get("/api/admin/user-options").json()
     assert options["classes"] == ["高一1班", "高一2班", "高二1班"]
     assert options["grades"] == ["高一", "高二"]
+
+
+def test_student_can_delete_own_conversation_without_affecting_teacher_or_feishu(client: TestClient):
+    login(client, "teacher", "tea-del", "张老师")
+    teacher_id = client.get("/api/me").json()["id"]
+
+    login(client, "admin", "admin-del", "管理员")
+    assert client.put(
+        f"/api/admin/teachers/{teacher_id}",
+        json={"enabled": True, "feishu_open_id": "ou_del_teacher"},
+    ).status_code == 200
+    assert client.post(
+        "/api/admin/routes",
+        json={"class_id": "高一1班", "subject": "物理", "teacher_id": teacher_id},
+    ).status_code == 200
+
+    login(client, "student", "stu-del-a", "学生甲", class_id=["高一1班"])
+    created = client.post(
+        "/api/conversations",
+        json={"mode": "direct", "teacher_id": teacher_id, "content": "老师请问这道题怎么解？"},
+    )
+    assert created.status_code == 200
+    conversation_id = created.json()["id"]
+
+    login(client, "teacher", "tea-del", "张老师")
+    teacher_upload = client.post(
+        "/api/uploads/images",
+        files={"file": ("answer.png", io.BytesIO(b"teacher-img"), "image/png")},
+    )
+    assert teacher_upload.status_code == 200
+    teacher_image_id = teacher_upload.json()["id"]
+    teacher_reply = client.post(
+        f"/api/conversations/{conversation_id}/messages",
+        json={"content": "看下步骤图", "image_ids": [teacher_image_id]},
+    )
+    assert teacher_reply.status_code == 200
+    with client.app.state.session_factory() as db:
+        before_updated_at = db.get(Conversation, conversation_id).updated_at
+
+    login(client, "student", "stu-del-b", "学生乙", class_id=["高一1班"])
+    assert client.delete(f"/api/conversations/{conversation_id}").status_code == 403
+
+    login(client, "teacher", "tea-del", "张老师")
+    assert client.delete(f"/api/conversations/{conversation_id}").status_code == 403
+
+    login(client, "admin", "admin-del", "管理员")
+    assert client.delete(f"/api/conversations/{conversation_id}").status_code == 403
+    deliveries = client.get("/api/admin/feishu/status").json()["deliveries"]
+    feishu_message_id = next(item["feishu_message_id"] for item in deliveries if item["conversation_id"] == conversation_id)
+
+    login(client, "student", "stu-del-a", "学生甲", class_id=["高一1班"])
+    assert client.delete("/api/conversations/999999").status_code == 404
+    deleted = client.delete(f"/api/conversations/{conversation_id}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"ok": True}
+
+    assert client.get("/api/student/inbox").json() == []
+    assert client.get(f"/api/conversations/{conversation_id}/messages").status_code == 404
+    assert client.post(f"/api/conversations/{conversation_id}/messages", json={"content": "再发一条"}).status_code == 404
+    assert client.delete(f"/api/conversations/{conversation_id}").status_code == 404
+    assert client.get(f"/api/media/{teacher_image_id}").status_code == 403
+
+    with client.app.state.session_factory() as db:
+        conv_row = db.get(Conversation, conversation_id)
+        assert conv_row is not None
+        assert conv_row.student_deleted_at is not None
+        assert conv_row.updated_at == before_updated_at
+
+    login(client, "teacher", "tea-del", "张老师")
+    assert [item["id"] for item in client.get("/api/teacher/inbox").json()] == [conversation_id]
+    assert [m["content"] for m in client.get(f"/api/conversations/{conversation_id}/messages").json()] == [
+        "老师请问这道题怎么解？",
+        "看下步骤图",
+    ]
+    assert client.get(f"/api/media/{teacher_image_id}").status_code == 200
+
+    feishu_reply = client.post(
+        "/api/dev/feishu/reply",
+        json={
+            "reply_to_message_id": feishu_message_id,
+            "sender_open_id": "ou_del_teacher",
+            "content": "飞书补充回复",
+        },
+    )
+    assert feishu_reply.status_code == 200
+    assert client.get(f"/api/conversations/{conversation_id}/messages").json()[-1]["content"] == "飞书补充回复"
+
+    login(client, "admin", "admin-del", "管理员")
+    assert client.get(f"/api/media/{teacher_image_id}").status_code == 200
+
+    login(client, "student", "stu-del-a", "学生甲", class_id=["高一1班"])
+    assert client.get("/api/student/inbox").json() == []
+
+    recreated = client.post(
+        "/api/conversations",
+        json={"mode": "direct", "teacher_id": teacher_id, "content": "新建一条对话"},
+    )
+    assert recreated.status_code == 200
+    new_id = recreated.json()["id"]
+    assert new_id != conversation_id
+    assert [item["id"] for item in client.get("/api/student/inbox").json()] == [new_id]
+
+
+def test_ensure_schema_adds_student_deleted_at_to_legacy_database(tmp_path: Path):
+    db_path = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE conversations (
+                id INTEGER PRIMARY KEY,
+                student_id INTEGER NOT NULL,
+                teacher_id INTEGER NOT NULL,
+                subject VARCHAR(128),
+                mode VARCHAR(32) NOT NULL,
+                status VARCHAR(24) NOT NULL,
+                created_at DATETIME NOT NULL,
+                updated_at DATETIME NOT NULL
+            );
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    app = create_app(database_url=f"sqlite:///{db_path}", media_dir=tmp_path / "media", dev_auth_enabled=True)
+    inspector = sa_inspect(app.state.session_factory.kw["bind"])
+    column_names = {col["name"] for col in inspector.get_columns("conversations")}
+    index_names = {idx["name"] for idx in inspector.get_indexes("conversations")}
+    assert "student_deleted_at" in column_names
+    assert "ix_conversations_student_deleted_at" in index_names
+
+    legacy_client = TestClient(app)
+    login(legacy_client, "teacher", "tea-legacy", "老王老师")
+    teacher_id = legacy_client.get("/api/me").json()["id"]
+    login(legacy_client, "admin", "adm-legacy", "管理员")
+    assert legacy_client.put(f"/api/admin/teachers/{teacher_id}", json={"enabled": True}).status_code == 200
+    assert legacy_client.post(
+        "/api/admin/routes",
+        json={"class_id": "高一1班", "subject": "物理", "teacher_id": teacher_id},
+    ).status_code == 200
+
+    login(legacy_client, "student", "stu-legacy", "老数据库学生", class_id=["高一1班"])
+    created = legacy_client.post(
+        "/api/conversations",
+        json={"mode": "direct", "teacher_id": teacher_id, "content": "迁移后测试"},
+    )
+    assert created.status_code == 200
+    conv_id = created.json()["id"]
+    assert [item["id"] for item in legacy_client.get("/api/student/inbox").json()] == [conv_id]
+    assert legacy_client.delete(f"/api/conversations/{conv_id}").status_code == 200
+    assert legacy_client.get("/api/student/inbox").json() == []

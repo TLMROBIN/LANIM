@@ -491,16 +491,23 @@ textarea {
   padding: 0 var(--chat-space-2);
 }
 
-.student-new-chat:hover { background: #e2ebff; }
+.student-new-chat:hover:not(:disabled) { background: #e2ebff; }
+.student-new-chat:disabled { cursor: not-allowed; opacity: .5; }
 .student-new-chat svg,
+.student-conversation-delete svg,
 .student-mobile-back svg,
 .student-attach-button svg { fill: none; height: 20px; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; width: 20px; }
 
 .student-conversation-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--chat-space-2); }
 .student-list-empty { color: var(--chat-muted); font-size: 13px; line-height: 1.5; margin: var(--chat-space-4) var(--chat-space-2); }
-.student-conversation { align-items: center; background: transparent; border: 0; border-radius: 9px; color: var(--chat-ink); cursor: pointer; display: flex; gap: var(--chat-space-3); margin: 2px 0; min-height: 68px; padding: var(--chat-space-2) var(--chat-space-3); text-align: left; width: 100%; }
-.student-conversation:hover { background: var(--chat-hover); }
-.student-conversation.selected { background: var(--chat-selection); }
+.student-conversation-row { align-items: center; border-radius: 9px; display: flex; gap: var(--chat-space-1); margin: 2px 0; padding-right: var(--chat-space-1); }
+.student-conversation-row:hover { background: var(--chat-hover); }
+.student-conversation-row.selected { background: var(--chat-selection); }
+.student-conversation { align-items: center; background: transparent; border: 0; border-radius: 9px; color: var(--chat-ink); cursor: pointer; display: flex; flex: 1 1 auto; gap: var(--chat-space-3); margin: 0; min-height: 68px; min-width: 0; padding: var(--chat-space-2) var(--chat-space-2) var(--chat-space-2) var(--chat-space-3); text-align: left; }
+.student-conversation:disabled { cursor: not-allowed; opacity: .65; }
+.student-conversation-delete { align-items: center; background: transparent; border: 0; border-radius: 8px; color: var(--chat-muted); cursor: pointer; display: inline-flex; flex: 0 0 38px; height: 38px; justify-content: center; padding: 0; }
+.student-conversation-delete:hover:not(:disabled) { background: #fff2f0; color: #b42318; }
+.student-conversation-delete:disabled { cursor: not-allowed; opacity: .45; }
 .student-conversation-avatar,
 .student-header-avatar { align-items: center; background: #e7edf5; border-radius: 50%; color: #334764; display: flex; flex: 0 0 42px; font-size: 15px; font-weight: 700; height: 42px; justify-content: center; }
 .student-conversation-copy { display: block; min-width: 0; width: 100%; }
@@ -514,9 +521,13 @@ textarea {
 .student-chat-header { min-height: 68px; }
 .student-chat-heading,
 .student-new-heading { display: flex; flex-direction: column; gap: var(--chat-space-1); min-width: 0; }
-.student-chat-heading strong { font-size: 15px; }
+.student-chat-heading { flex: 1 1 auto; }
+.student-chat-heading strong { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .student-chat-heading span,
 .student-new-heading label { color: var(--chat-muted); font-size: 12px; }
+.student-delete-chat { align-items: center; background: #fff2f0; border: 1px solid #ffd5d0; border-radius: 8px; color: #b42318; cursor: pointer; display: inline-flex; flex: 0 0 auto; font: inherit; font-size: 13px; font-weight: 700; justify-content: center; margin-left: auto; min-height: 44px; padding: 0 var(--chat-space-3); white-space: nowrap; }
+.student-delete-chat:hover:not(:disabled) { background: #ffe4e1; }
+.student-delete-chat:disabled { cursor: not-allowed; opacity: .5; }
 .student-new-heading select { background: var(--chat-surface); max-width: 340px; min-height: 44px; min-width: min(340px, 56vw); padding: var(--chat-space-2) var(--chat-space-3); }
 .student-new-heading select:disabled { background: var(--chat-hover); }
 .student-no-teachers { color: #8a4b10; font-size: 13px; margin: 0 0 0 auto; }
@@ -568,6 +579,8 @@ textarea {
 .student-new-chat:focus-visible,
 .student-mobile-back:focus-visible,
 .student-conversation:focus-visible,
+.student-conversation-delete:focus-visible,
+.student-delete-chat:focus-visible,
 .student-attach-button:focus-within,
 .student-attachment-chip button:focus-visible,
 .student-send-button:focus-visible { outline: 3px solid #9db7ff; outline-offset: 2px; }
@@ -593,6 +606,7 @@ textarea {
   .student-chat-layout.show-list .student-sidebar { display: flex; }
   .student-chat-layout.show-list .student-chat-main { display: none; }
   .student-mobile-back { display: inline-flex; }
+  .student-conversation-delete { flex: 0 0 44px; height: 44px; }
   .student-chat-header { min-height: 62px; padding: var(--chat-space-2) var(--chat-space-3); }
   .student-new-heading { flex: 1 1 auto; }
   .student-new-heading select { max-width: 100%; min-width: 0; width: 100%; }
